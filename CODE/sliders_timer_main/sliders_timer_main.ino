@@ -85,6 +85,7 @@ float b = 0;
 int i = 0;
 int k1 = 0;
 int menu = 0;
+int buzzerState = 1;
 
 void setup()
 {
@@ -208,6 +209,18 @@ void ecranBlinkUnified(bool allSegments, int bloc = 0, int ecran = 0)
     }
 }
 
+void customTone(int frequency, int duration = 0) {
+    if (buzzerState == 1) {
+        if (duration > 0) {
+            tone(speaker, frequency, duration);
+        } else {
+            tone(speaker, frequency);
+        }
+    } else {
+        noTone(speaker);
+    }
+}
+
 void updatespeaker_pattern(int interval, int numBips, int pause)
 {
     static int state = 0;
@@ -234,7 +247,7 @@ void updatespeaker_pattern(int interval, int numBips, int pause)
         if (m >= lasttimeon + interval)
         {
             state = 1;
-            tone(speaker, 2700);
+            customTone(2700);
             lasttimeon = m;
         }
         return;
@@ -255,50 +268,19 @@ void updatespeaker_pattern(int interval, int numBips, int pause)
 
 void startMusique()
 {
-    tone(speaker, 5500, 150);
-    delay(200);
-    tone(speaker, 5500, 150);
-    delay(200);
-    tone(speaker, 5500, 10);
-    delay(10);
-    tone(speaker, 5500, 10);
-    delay(10);
-    tone(speaker, 5500, 10);
-    delay(10);
-    tone(speaker, 5500, 10);
-    delay(10);
-    tone(speaker, 5500, 10);
-    delay(10);
-    tone(speaker, 5500, 10);
-    delay(10);
-    tone(speaker, 5500, 10);
-    delay(10);
-    tone(speaker, 5500, 10);
-    delay(10);
-    tone(speaker, 5500, 10);
-    delay(10);
-    tone(speaker, 5500, 10);
-    delay(10);
-    tone(speaker, 5500, 10);
-    delay(10);
-    tone(speaker, 5500, 10);
-    delay(10);
-    tone(speaker, 5500, 10);
-    delay(10);
-    tone(speaker, 5500, 10);
-    delay(10);
-    tone(speaker, 5500, 10);
-    delay(10);
-    tone(speaker, 3500, 100);
-    delay(100);
-    tone(speaker, 3500, 500);
-    delay(250);
-    tone(speaker, 2500, 500);
-    delay(250);
-    tone(speaker, 1500, 500);
-    delay(250);
+    int frequencies[] = {5500, 5500, 5500, 5500, 5500, 5500, 5500, 5500, 5500, 5500, 5500, 5500, 5500, 5500, 5500, 5500, 3500, 3500, 2500, 1500};
+    int durations[] = {150, 150, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 100, 500, 500, 500};
+    int delays[] =    {200, 200, 10,  10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 100, 250, 250, 250};
+
+    int sequenceLength = sizeof(frequencies) / sizeof(frequencies[0]);
+
+    for (int i = 0; i < sequenceLength; i++) {
+        customTone(frequencies[i], durations[i]);
+        delay(delays[i]);
+    }
+
     noTone(speaker);
-    delay(250);
+    delay(250);  
 }
 
 void genserSequence()
@@ -323,7 +305,7 @@ void genserSequence()
     lc.setRow(1, 1, B00000011);
     lc.setRow(1, 2, B01011110);
     // bip
-    tone(speaker, 5500, 50);
+    customTone(5500, 50);
 
     delay(400);
     // clear
@@ -344,7 +326,7 @@ void genserSequence()
     lc.setRow(1, 0, B00000101);
     lc.setRow(1, 1, B01000000);
     lc.setRow(1, 2, B01000000);
-    tone(speaker, 5500, 50);
+    customTone(5500, 50);
 
     delay(200);
     // clear
@@ -372,7 +354,7 @@ void genserSequence()
     lc.setRow(1, 1, B00001000);
     lc.setRow(1, 2, B01010100);
     // bip
-    tone(speaker, 5500, 50);
+    customTone(5500, 50);
 
     delay(200);
     // clear
@@ -393,7 +375,7 @@ void genserSequence()
     lc.setRow(1, 0, B00110000);
     lc.setRow(1, 1, B01000001);
     lc.setRow(1, 2, B01001110);
-    tone(speaker, 5500, 50);
+    customTone(5500, 50);
 
     delay(200);
     // clear
@@ -421,7 +403,7 @@ void genserSequence()
     lc.setRow(1, 1, B00011010);
     lc.setRow(1, 2, B00011010);
     // bip
-    tone(speaker, 5500, 50);
+    customTone(5500, 50);
 
     delay(200);
     // clear
@@ -442,7 +424,7 @@ void genserSequence()
     lc.setRow(1, 0, B00011001);
     lc.setRow(1, 1, B00001001);
     lc.setRow(1, 2, B00010011);
-    tone(speaker, 5500, 50);
+    customTone(5500, 50);
 
     delay(200);
     // clear
@@ -463,7 +445,7 @@ void genserSequence()
     lc.setRow(1, 0, B00110011);
     lc.setRow(1, 1, B00110111);
     lc.setRow(1, 2, B10001001);
-    tone(speaker, 5500, 50);
+    customTone(5500, 50);
 
     delay(200);
     // clear
@@ -492,7 +474,7 @@ void genserSequence()
     lc.setRow(1, 1, B00010001);
     lc.setRow(1, 2, B01000001);
     // bip
-    tone(speaker, 5500, 50);
+    customTone(5500, 50);
 
     delay(350);
     // clear
@@ -618,7 +600,7 @@ void displayFade()
 void displayWrap()
 {
     delay(30);
-    tone(speaker, 5500, 100);
+    customTone(5500, 100);
     lc.setRow(0, 0, B00000010);
     lc.setRow(0, 1, B00000010);
     lc.setRow(0, 2, B00000010);
@@ -629,7 +611,7 @@ void displayWrap()
     lc.setRow(1, 4, B01011010);
     noTone(speaker);
     delay(30);
-    tone(speaker, 5500, 100);
+    customTone(5500, 100);
     lc.setRow(0, 0, B01000000);
     lc.setRow(0, 1, B01000000);
     lc.setRow(0, 2, B01000000);
@@ -643,7 +625,7 @@ void displayWrap()
     lc.setRow(1, 2, B00000010);
     noTone(speaker);
     delay(30);
-    tone(speaker, 5500, 100);
+    customTone(5500, 100);
     lc.setRow(0, 0, B00100000);
     lc.setRow(0, 1, B00100000);
     lc.setRow(0, 2, B00100000);
@@ -657,7 +639,7 @@ void displayWrap()
     lc.setRow(1, 2, B00000100);
     noTone(speaker);
     delay(30);
-    tone(speaker, 5500, 100);
+    customTone(5500, 100);
     lc.setRow(0, 0, B00010000);
     lc.setRow(0, 1, B00010000);
     lc.setRow(0, 2, B00010000);
@@ -671,7 +653,7 @@ void displayWrap()
     lc.setRow(1, 2, B00001000);
     noTone(speaker);
     delay(30);
-    tone(speaker, 5500, 100);
+    customTone(5500, 100);
     lc.setRow(0, 0, B00001000);
     lc.setRow(0, 1, B00001000);
     lc.setRow(0, 2, B00001000);
@@ -685,7 +667,7 @@ void displayWrap()
     lc.setRow(1, 2, B00010000);
     noTone(speaker);
     delay(30);
-    tone(speaker, 5500, 100);
+    customTone(5500, 100);
     lc.setRow(0, 0, B00000100);
     lc.setRow(0, 1, B00000100);
     lc.setRow(0, 2, B00000100);
@@ -699,7 +681,7 @@ void displayWrap()
     lc.setRow(1, 2, B00100000);
     noTone(speaker);
     delay(30);
-    tone(speaker, 5500, 100);
+    customTone(5500, 100);
     lc.setRow(0, 0, B00000010);
     lc.setRow(0, 1, B00000010);
     lc.setRow(0, 2, B00000010);
@@ -713,7 +695,7 @@ void displayWrap()
     lc.setRow(1, 2, B01000000);
     noTone(speaker);
     delay(30);
-    tone(speaker, 5500, 100);
+    customTone(5500, 100);
     lc.setRow(0, 0, B01000000);
     lc.setRow(0, 1, B01000000);
     lc.setRow(0, 2, B01000000);
@@ -724,7 +706,7 @@ void displayWrap()
     lc.setRow(1, 4, B10110110);
     noTone(speaker);
     delay(30);
-    tone(speaker, 5500, 100);
+    customTone(5500, 100);
     lc.setRow(0, 0, B00100000);
     lc.setRow(0, 1, B00100000);
     lc.setRow(0, 2, B00100000);
@@ -738,7 +720,7 @@ void displayWrap()
     lc.setRow(1, 2, B00000010);
     noTone(speaker);
     delay(30);
-    tone(speaker, 5500, 100);
+    customTone(5500, 100);
     lc.setRow(0, 0, B00010000);
     lc.setRow(0, 1, B00010000);
     lc.setRow(0, 2, B00010000);
@@ -752,7 +734,7 @@ void displayWrap()
     lc.setRow(1, 2, B00000100);
     noTone(speaker);
     delay(30);
-    tone(speaker, 2500, 100);
+    customTone(2500, 100);
     lc.setRow(0, 0, B00001000);
     lc.setRow(0, 1, B00001000);
     lc.setRow(0, 2, B00001000);
@@ -766,7 +748,7 @@ void displayWrap()
     lc.setRow(1, 2, B00001000);
     noTone(speaker);
     delay(30);
-    tone(speaker, 2500, 100);
+    customTone(2500, 100);
     lc.setRow(0, 0, B00000100);
     lc.setRow(0, 1, B00000100);
     lc.setRow(0, 2, B00000100);
@@ -780,7 +762,7 @@ void displayWrap()
     lc.setRow(1, 2, B00010000);
     noTone(speaker);
     delay(30);
-    tone(speaker, 2500, 100);
+    customTone(2500, 100);
     lc.setRow(0, 0, B00000010);
     lc.setRow(0, 1, B00000010);
     lc.setRow(0, 2, B00000010);
@@ -794,7 +776,7 @@ void displayWrap()
     lc.setRow(1, 2, B00100000);
     noTone(speaker);
     delay(30);
-    tone(speaker, 2500, 100);
+    customTone(2500, 100);
     lc.setRow(1, 3, B01010101);
     lc.setRow(1, 4, B10000100);
     lc.setRow(1, 0, B01000000);
@@ -1223,7 +1205,7 @@ void handleMenu(int menu, int increment, int digitPosition, bool isDayMenu = fal
 
     if (digitalRead(BP_UP) == LOW)
     {
-        tone(speaker, 3000, 50);
+        customTone(3000, 50);
 
         if (isDayMenu)
         {
@@ -1246,7 +1228,7 @@ void handleMenu(int menu, int increment, int digitPosition, bool isDayMenu = fal
 
     if (digitalRead(BP_DOWN) == LOW)
     {
-        tone(speaker, 2900, 50);
+        customTone(2900, 50);
 
         if (isDayMenu)
         {
@@ -1351,7 +1333,7 @@ void normal()
                 {
                     mp3_play();
                     vortex = 1;
-                    tone(speaker, 3000, 1000);
+                    customTone(3000, 1000);
 
                     lc.setLed(1, 7, 4, true);
                     lc.setLed(1, 7, 1, true);
@@ -1403,6 +1385,11 @@ void normal()
                 {
                     batterie();
                 }
+
+                if ((digitalRead(BP_START) == LOW) && (running == true))
+                {
+                    buzzerState = !buzzerState;
+                }
             }
         }
 
@@ -1438,7 +1425,7 @@ void normal()
                     lc.setLed(1, 7, 2, true);
                     lc.setLed(1, 7, 3, true);
                     lc.setLed(1, 7, 4, true);
-                    tone(speaker, 3000, 1000);
+                    customTone(3000, 1000);
                     colorWipeUnified(Red, 100, false, true);
                     colorWipeUnified(Off, 100, false, false);
                     delay(1500);
@@ -1463,6 +1450,11 @@ void normal()
                 {
                     batterie();
                 }
+
+                if ((digitalRead(BP_START) == LOW) && (running == true))
+                {
+                    buzzerState = !buzzerState;
+                }
             }
         }
 
@@ -1479,6 +1471,11 @@ void normal()
                 if (digitalRead(BP_DOWN) == LOW)
                 {
                     batterie();
+                }
+
+                if ((digitalRead(BP_START) == LOW) && (running == true))
+                {
+                    buzzerState = !buzzerState;
                 }
             }
         }
@@ -1610,7 +1607,7 @@ void animation_burnout()
     }
     else if (totalsectime == 0)
     {
-        tone(speaker, 3000, 200);
+        customTone(3000, 200);
     }
     else
     {
@@ -1652,7 +1649,7 @@ void animation_normal()
     }
     else if (totalsectime_reste <= 1)
     {
-        tone(speaker, 3000, 1500);
+        customTone(3000, 1500);
     }
     else
     {
@@ -1694,7 +1691,7 @@ void animation_normal()
     {
         lc.setLed(1, 7, 2, true);
         lc.setLed(1, 7, 3, true);
-        tone(speaker, 3000, 1500);
+        customTone(3000, 1500);
         delay(1500);
     }
 }
@@ -1771,6 +1768,7 @@ void veille()
     lc.shutdown(1, HIGH);
     lc.shutdown(0, HIGH);
     offadafruit();
+    buzzerState = 0;
 }
 
 void reveille()
@@ -1778,6 +1776,7 @@ void reveille()
     lc.shutdown(1, LOW);
     lc.shutdown(0, LOW);
     onadafruit();
+    buzzerState = 1;
 }
 
 void debounceSTART()
@@ -1842,7 +1841,7 @@ void mode_test()
     lc.setLed(1, 7, 2, true);
     lc.setLed(1, 7, 3, true);
 
-    tone(speaker, 3000, 5000);
+    customTone(3000, 5000);
     strip.fill(strip.Color(255, 0, 0), 0, 7);
 
     delay(10000);
@@ -1878,7 +1877,7 @@ void buzzer_menu()
 {
     if ((!running) && (BP_POWER_STATUS == true))
     {
-        tone(speaker, 3100, 200);
+        customTone(3100, 200);
     }
 }
 
@@ -1892,20 +1891,26 @@ void menu_up()
 
 int getBattery()
 {
-    float b = analogRead(BATTERYPIN);
+    float lecture = analogRead(BATTERYPIN);
+    float tension = (lecture / 1023.0) * 5.0; // Conversion en tension
 
-    int minValue = (1023 * TensionMin) / 5;
-    int maxValue = (1023 * TensionMax) / 5;
+    // Si en USB, ne pas calculer la batterie
+    if (tension > 4.2)
+    {
+        return 100;
+    }
 
-    b = ((b - minValue) / (maxValue - minValue)) * 100;
+    // Plage des valeurs
+    float minValue = TensionMin;
+    float maxValue = TensionMax;
 
-    if (b > 100)
-        b = 100;
+    // Conversion en pourcentage
+    float pourcentage = ((tension - minValue) / (maxValue - minValue)) * 100;
 
-    else if (b < 0)
-        b = 0;
-    int valeur = b;
-    return b;
+    // Limite entre 0 et 100
+    pourcentage = constrain(pourcentage, 0, 100);
+
+    return (int)pourcentage;
 }
 
 void batterie()
@@ -1923,8 +1928,18 @@ void batterie()
     lc.setRow(0, 5, B00111011); // 'y'
     delay(1500);
 
-    totalsectime = getBattery();
-    showTime();
+    //totalsectime = getBattery();
+    //showTime();
+    int batteryLevel = getBattery();
+    lc.setRow(0, 0, B00000000);
+    lc.setRow(0, 1, B00000000);
+    lc.setRow(0, 2, B00000000);
+    lc.setDigit(0, 3, batteryLevel / 100, false);
+    lc.setDigit(0, 4, (batteryLevel % 100) / 10, false);
+    lc.setDigit(0, 5, batteryLevel % 10, false);
+    lc.setRow(1, 0, B00000000);
+    lc.setRow(1, 1, B00000000);
+    lc.setRow(1, 2, B00000000);
     delay(2500);
 
     totalsectime = totalsectime_save;
