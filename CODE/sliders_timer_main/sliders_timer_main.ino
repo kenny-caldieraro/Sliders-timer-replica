@@ -1307,6 +1307,7 @@ void normal()
                     showTime();
                 }
 
+                // End normal mode
                 if (totalsectime_reste <= 0)
                 {
                     mp3_play();
@@ -1329,6 +1330,7 @@ void normal()
                     BP_START_STATUS = false;
                 }
 
+                // Enter in butnout mode
                 if (digitalRead(BP_VORTEX) == LOW)
                 {
                     mp3_play();
@@ -1350,8 +1352,10 @@ void normal()
                     displayFade();
                     genserSequence();
                     displayWrap();
+                    reveille();
                 }
 
+                // Time remain
                 if (digitalRead(BP_UP) == LOW)
                 {
                     noTone(speaker);
@@ -1381,11 +1385,13 @@ void normal()
                     running = true;
                 }
 
+                // Show batery
                 if ((digitalRead(BP_DOWN) == LOW) && (running == true))
                 {
                     batterie();
                 }
 
+                // Mute
                 if ((digitalRead(BP_START) == LOW) && (running == true))
                 {
                     buzzerState = !buzzerState;
@@ -1398,7 +1404,6 @@ void normal()
             while (vortex == 1)
             {
                 showTime();
-
                 animation_burnout();
                 button1.tick();
                 button2.tick();
@@ -1434,6 +1439,7 @@ void normal()
                     genserSequence();
                     displayWrap();
                     totalsectime = random(16756131); // random
+                    reveille();
                 }
 
                 if (totalsectime <= 0)
@@ -1451,7 +1457,7 @@ void normal()
                     batterie();
                 }
 
-                if ((digitalRead(BP_START) == LOW) && (running == true))
+                if (digitalRead(BP_START) == LOW)
                 {
                     buzzerState = !buzzerState;
                 }
@@ -1545,9 +1551,8 @@ void normal()
 
 void animation_burnout()
 {
-    adafruit();
-    onadafruit();
     lc.setRow(1, 6, B01111000);
+    adafruit();
 
     if (totalsectime <= 30)
     {
@@ -1597,6 +1602,11 @@ void animation_burnout()
         }
     }
 
+    if (totalsectime == 30)
+    {
+      reveille();
+    }
+
     if (totalsectime > 10 && totalsectime <= 20)
     {
         updatespeaker_pattern(25, 5, 500);
@@ -1638,6 +1648,11 @@ void animation_normal()
     blinkLEDUnified(colonLED);
     adafruit();
     lc.setRow(1, 6, B01111000);
+
+    if (totalsectime == 30)
+    {
+      reveille();
+    }
 
     if ((totalsectime_reste >= 10) && (totalsectime_reste <= 20))
     {
