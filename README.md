@@ -64,6 +64,9 @@ You can find the full list of required components in the [component list](./PART
 6. **Final Assembly**:
    Mount everything inside the 3D-printed casing and connect the components according to the diagrams.
 
+## If you like it
+[Support me on Buy Me a Coffee](https://buymeacoffee.com/kenny.caldieraro)
+
 ## Contributing
 
 Contributions are welcome! If you'd like to improve this project, feel free to fork the repository and submit a pull request. Whether it's adding features, optimizing the code, or improving documentation, all help is appreciated.
