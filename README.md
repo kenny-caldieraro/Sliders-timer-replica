@@ -2,7 +2,7 @@
 
 Welcome to the **Sliders Timer Replica** project! This project faithfully recreates the iconic "Timer" from the TV show _Sliders_, a device used for traveling between parallel universes. This replica is based on an Arduino microcontroller and includes electronic components, 3D design files, and the necessary schematics to build the casing and PCB.
 
-![Sliders Timer Replica](./PICTURES/IMG_20200306_144748.jpg)
+![Sliders Timer Replica](./PICTURES/IMG_0774.jpg)
 
 ## Project Content
 
@@ -65,6 +65,7 @@ You can find the full list of required components in the [component list](./PART
    Mount everything inside the 3D-printed casing and connect the components according to the diagrams.
 
 ## If you like it
+
 [Support me on Buy Me a Coffee](https://buymeacoffee.com/kenny.caldieraro)
 
 ## Contributing
@@ -73,4 +74,4 @@ Contributions are welcome! If you'd like to improve this project, feel free to f
 
 ## License
 
-Sliders Timer Replica © 2021 by Kenny Caldieraro is licensed under CC BY-NC-SA 4.0  - see the LICENSE file for details.
+Sliders Timer Replica © 2021 by Kenny Caldieraro is licensed under CC BY-NC-SA 4.0 - see the LICENSE file for details.
