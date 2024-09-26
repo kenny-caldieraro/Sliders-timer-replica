@@ -73,4 +73,4 @@ Contributions are welcome! If you'd like to improve this project, feel free to f
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+Sliders Timer Replica © 2021 by Kenny Caldieraro is licensed under CC BY-NC-SA 4.0  - see the LICENSE file for details.
