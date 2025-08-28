@@ -4,6 +4,8 @@ Welcome to the **Sliders Timer Replica** project! This project faithfully recrea
 
 ![Sliders Timer Replica](./PICTURES/IMG_0774.jpg)
 
+Looking for the French guide? See `README.fr.md`.
+
 ## Project Content
 
 - **Source Code**: Arduino sketch to control the Timer.
@@ -63,6 +65,13 @@ You can find the full list of required components in the [component list](./PART
 
 6. **Final Assembly**:
    Mount everything inside the 3D-printed casing and connect the components according to the diagrams.
+
+## Documentation
+
+- Firmware guide: `CODE/README.md`
+- PCB manufacturing: `PCB/README.md`
+- 3D printing: `STL/README.md`
+- Docs index (EN/FR PDFs): `DOCS/README.md`
 
 ## If you like it
 
