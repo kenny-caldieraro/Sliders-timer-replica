@@ -1201,7 +1201,15 @@ void normal() {
       lc.setLed(1, 7, 3, false);
 
       mp3_play_physical(1);  // 0001.mp3 = son de vortex
-      waitMs(VORTEX_MP3_DURATION_MS);  // attendre la fin du 0001.mp3 avant le countdown
+      // Pendant la lecture du mp3 (~8s), on joue displayWrap en boucle.
+      // Buzzer mute pour ne pas chevaucher le mp3 (displayWrap fait des bips).
+      int prevBuzzerState = buzzerState;
+      buzzerState = 0;
+      unsigned long mp3Start = millis();
+      while (millis() - mp3Start < VORTEX_MP3_DURATION_MS) {
+        displayWrap();
+      }
+      buzzerState = prevBuzzerState;
 
       while ((vortex == 0) && (BP_START_STATUS == true) && (totalsectime_slide != 0)) {
         animation_normal();
