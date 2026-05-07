@@ -2,6 +2,8 @@
 #include "OneButton.h"
 #include "Adafruit_NeoPixel.h"
 #include "DFPlayer_Mini_Mp3.h"
+#include <avr/wdt.h>
+#include <EEPROM.h>
 
 #define BP_START A0
 #define BP_UP A1
@@ -9,6 +11,25 @@
 #define ADAFRUITPIN 4
 #define BP_VORTEX A5
 #define BATTERYPIN A7
+
+// --- Parametres audio / animation ---
+const uint8_t  DFPLAYER_VOLUME       = 28;     // 0-30
+const uint16_t START_INTRO_DELAY_MS  = 2500;   // ecrans noirs au demarrage
+const uint16_t START_OUTRO_DELAY_MS  = 2500;   // attente apres l'animation pour synchro fin du clip
+const uint16_t VORTEX_MP3_DURATION_MS = 8000;  // duree du 0001.mp3 (vortex)
+const uint16_t COUNTDOWN_BIP_FREQ    = 3820;   // freq bip countdown (mesuree sur clip)
+const uint16_t START_LOCK_TONE_FREQ  = 3000;   // freq bip de fin (3 sec / 1.5 sec)
+
+// --- Parametres timer ---
+const unsigned long SECONDS_IN_DAY    = 86400UL;
+const unsigned long SECONDS_IN_HOUR   = 3600UL;
+const unsigned long SECONDS_IN_MINUTE = 60UL;
+const unsigned long VORTEX_RANDOM_MAX = 16756131UL;  // ~193 jours
+
+// --- EEPROM ---
+const int EEPROM_MAGIC_ADDR = 0;
+const uint8_t EEPROM_MAGIC_VALUE = 0xA5;
+const int EEPROM_TOTALSECTIME_SLIDE_ADDR = 1;
 
 struct LED {
   int pinState;
@@ -28,15 +49,16 @@ struct Bargraphe {
   int delayTime;
 };
 
+// Format generique pour les animations 7-segments stockees en PROGMEM:
+// 6 bytes matrix 0 (rows 0-5) + 5 bytes matrix 1 (rows 0-4) + delay (ms).
+struct AnimFrame {
+  uint8_t r0[6];
+  uint8_t r1[5];
+  uint8_t delay_ms;
+};
+
 Adafruit_NeoPixel strip = Adafruit_NeoPixel(7, ADAFRUITPIN, NEO_GRB + NEO_KHZ800);
-int val = 0;
-int colorVal = 0;
-int reading = 0;
-int x;
 int prevVal = 0;
-boolean lastBtn = LOW;
-boolean NeopixelColor = false;
-boolean lastButton = LOW;
 
 // Lissage de la valeur du potentiomètre
 const int numReadings = 10;
@@ -48,7 +70,6 @@ int average = 0;
 uint32_t Red = strip.Color(255, 0, 0);
 uint32_t Off = strip.Color(0, 0, 0);
 
-#define TEMPS_ANTI_REBOND_MS 30
 LedControl lc = LedControl(12, 11, 10, 2);
 
 const int pot1 = A6;
@@ -61,7 +82,6 @@ OneButton button2(A3, true);
 volatile byte running = false;
 
 unsigned long totalsectime_slide = 0;
-unsigned long totalsectime_reste = 0;
 unsigned long totalsectime = 0;
 
 bool BP_START_STATUS = false;
@@ -78,17 +98,16 @@ bool BP_POWER_STATUS = false;
 
 const float TensionMin = 3.2;
 const float TensionMax = 4.2;
-float b = 0;
 
-int i = 0;
-int k1 = 0;
+bool firstStartup = true;     // flag du 1er passage du double-click power (init musique + screens)
+bool wrapPlayedAt10s = false; // flag pour rejouer displayWrap une seule fois quand burnout=10s
 int menu = 0;
 int buzzerState = 1;
 
 void setup() {
   Serial.begin(9600);
   mp3_set_serial(Serial);
-  mp3_set_volume(30);
+  mp3_set_volume(28);
   mp3_set_EQ(0);
 
   button1.attachClick(click1);
@@ -102,11 +121,9 @@ void setup() {
   int devices = lc.getDeviceCount();
   for (int address = 0; address < devices; address++) {
     lc.shutdown(address, false);
-    lc.setIntensity(0, 15);
-    lc.setIntensity(1, 15);
+    lc.setIntensity(address, 15);
     lc.clearDisplay(address);
-    lc.setScanLimit(0, 7);
-    lc.setScanLimit(1, 7);
+    lc.setScanLimit(address, 7);
   }
 
   for (int i = 0; i < numReadings; i++) {
@@ -126,6 +143,16 @@ void setup() {
 
   strip.begin();
   strip.show();
+
+  // Restaure le dernier temps lock depuis EEPROM (si valide).
+  // On ne restaure QUE totalsectime_slide; totalsectime reste a 0 sinon
+  // le compteur considere le countdown comme deja termine.
+  if (EEPROM.read(EEPROM_MAGIC_ADDR) == EEPROM_MAGIC_VALUE) {
+    EEPROM.get(EEPROM_TOTALSECTIME_SLIDE_ADDR, totalsectime_slide);
+  }
+
+  // Disable watchdog (au cas ou on viendrait d'un reboot watchdog)
+  wdt_disable();
 }
 
 LED redLED = { HIGH, 0, 600, 4, false, 0, false, -1 };
@@ -200,15 +227,36 @@ void customTone(int frequency, int duration = 0) {
   }
 }
 
+// Attente non-bloquante pour les boutons: equivalent a delay(ms) mais en
+// continuant a appeler button.tick() pour ne pas perdre les clics utilisateur.
+void waitMs(unsigned long ms) {
+  unsigned long start = millis();
+  while (millis() - start < ms) {
+    button1.tick();
+    button2.tick();
+  }
+}
+
 void updatespeaker_pattern(int interval, int numBips, int pause) {
   static int state = 0;
   static unsigned int beeptime = 50;
   static unsigned long lasttimeon = 0;
   static unsigned int bipCount = 0;
+  static int lastInterval = -1;
+  static int lastNumBips = -1;
+  static int lastPause = -1;
   unsigned long m = millis();
 
-  int timeForBips = numBips * interval;
-  int totalTime = timeForBips + pause;
+  // Reset l'etat si le pattern change (sinon le bipCount/state d'un pattern
+  // precedent peut donner un rythme bizarre quand on saute des paliers).
+  if (interval != lastInterval || numBips != lastNumBips || pause != lastPause) {
+    state = 0;
+    bipCount = 0;
+    lasttimeon = m;
+    lastInterval = interval;
+    lastNumBips = numBips;
+    lastPause = pause;
+  }
 
   if (bipCount >= numBips) {
     if (m >= lasttimeon + pause) {
@@ -221,7 +269,7 @@ void updatespeaker_pattern(int interval, int numBips, int pause) {
   if (state == 0) {
     if (m >= lasttimeon + interval) {
       state = 1;
-      customTone(2700);
+      customTone(COUNTDOWN_BIP_FREQ);
       lasttimeon = m;
     }
     return;
@@ -239,19 +287,10 @@ void updatespeaker_pattern(int interval, int numBips, int pause) {
 }
 
 void startMusique() {
-  int frequencies[] = { 5500, 5500, 5500, 5500, 5500, 5500, 5500, 5500, 5500, 5500, 5500, 5500, 5500, 5500, 5500, 5500, 3500, 3500, 2500, 1500 };
-  int durations[] = { 150, 150, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 100, 500, 500, 500 };
-  int delays[] = { 200, 200, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 100, 250, 250, 250 };
-
-  int sequenceLength = sizeof(frequencies) / sizeof(frequencies[0]);
-
-  for (int i = 0; i < sequenceLength; i++) {
-    customTone(frequencies[i], durations[i]);
-    delay(delays[i]);
-  }
-
-  noTone(speaker);
-  delay(250);
+  // Joue le clip d'activation Sliders Timer via le DFPlayer Mini.
+  // Fichier 0003.mp3 sur la carte SD.
+  mp3_play_physical(3);  // 0003.mp3 = clip d'activation Sliders Timer
+  waitMs(START_INTRO_DELAY_MS);  // ecrans noirs au debut du clip (effet d'intro)
 }
 
 void genserSequence() {
@@ -454,115 +493,32 @@ void genserSequence() {
   delay(75);
 }
 
+void renderAnimFrame(const AnimFrame *frame_pgm) {
+  AnimFrame f;
+  memcpy_P(&f, frame_pgm, sizeof(AnimFrame));
+  for (uint8_t r = 0; r < 6; r++) lc.setRow(0, r, f.r0[r]);
+  for (uint8_t r = 0; r < 5; r++) lc.setRow(1, r, f.r1[r]);
+  if (f.delay_ms) delay(f.delay_ms);
+}
+
+const AnimFrame DISPLAY_FADE_FRAMES[] PROGMEM = {
+  {{0x78, 0x7E, 0x7E, 0x7E, 0x7E, 0x1E}, {0x7F, 0x7F, 0x7F, 0xFF, 0xFF}, 30},
+  {{0x30, 0x7E, 0x7E, 0x7E, 0x80, 0x06}, {0x3F, 0x3F, 0x3F, 0xEF, 0xEF}, 30},
+  {{0x00, 0x7E, 0x7E, 0x7E, 0x7E, 0x00}, {0x2F, 0x2F, 0x2F, 0xE7, 0xE7}, 30},
+  {{0x00, 0x78, 0x7E, 0x7E, 0x40, 0x00}, {0x2B, 0x2B, 0x2B, 0xC7, 0xC7}, 30},
+  {{0x00, 0x30, 0x7E, 0x7E, 0x06, 0x00}, {0x0B, 0x0B, 0x0B, 0xC3, 0xC3}, 30},
+  {{0x00, 0x00, 0x7E, 0x7E, 0x00, 0x00}, {0x09, 0x09, 0x09, 0x83, 0x83}, 55},
+  {{0x00, 0x00, 0x78, 0x40, 0x00, 0x00}, {0x01, 0x01, 0x01, 0x81, 0x81}, 30},
+  {{0x00, 0x00, 0x30, 0x06, 0x00, 0x00}, {0x00, 0x00, 0x00, 0x01, 0x01}, 30},
+  {{0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, {0x00, 0x00, 0x00, 0x00, 0x00}, 0}
+};
+
 void displayFade() {
   delay(100);
-  lc.setRow(0, 0, B01111000);
-  lc.setRow(0, 1, B01111110);
-  lc.setRow(0, 2, B01111110);
-  lc.setRow(0, 3, B01111110);
-  lc.setRow(0, 4, B01111110);
-  lc.setRow(0, 5, B00011110);
-  lc.setRow(1, 3, B11111111);
-  lc.setRow(1, 4, B11111111);
-  lc.setRow(1, 0, B01111111);
-  lc.setRow(1, 1, B01111111);
-  lc.setRow(1, 2, B01111111);
-  delay(30);
-  lc.setRow(0, 0, B00110000);
-  lc.setRow(0, 1, B01111110);
-  lc.setRow(0, 2, B01111110);
-  lc.setRow(0, 3, B01111110);
-  lc.setRow(0, 4, B10000000);
-  lc.setRow(0, 5, B00000110);
-  lc.setRow(1, 3, B11101111);
-  lc.setRow(1, 4, B11101111);
-  lc.setRow(1, 0, B00111111);
-  lc.setRow(1, 1, B00111111);
-  lc.setRow(1, 2, B00111111);
-  delay(30);
-  lc.setRow(0, 0, B00000000);
-  lc.setRow(0, 1, B01111110);
-  lc.setRow(0, 2, B01111110);
-  lc.setRow(0, 3, B01111110);
-  lc.setRow(0, 4, B01111110);
-  lc.setRow(0, 5, B00000000);
-  lc.setRow(1, 3, B11100111);
-  lc.setRow(1, 4, B11100111);
-  lc.setRow(1, 0, B00101111);
-  lc.setRow(1, 1, B00101111);
-  lc.setRow(1, 2, B00101111);
-  delay(30);
-  lc.setRow(0, 0, B00000000);
-  lc.setRow(0, 1, B01111000);
-  lc.setRow(0, 2, B01111110);
-  lc.setRow(0, 3, B01111110);
-  lc.setRow(0, 4, B01000000);
-  lc.setRow(0, 5, B00000000);
-  lc.setRow(1, 3, B11000111);
-  lc.setRow(1, 4, B11000111);
-  lc.setRow(1, 0, B00101011);
-  lc.setRow(1, 1, B00101011);
-  lc.setRow(1, 2, B00101011);
-  delay(30);
-  lc.setRow(0, 0, B00000000);
-  lc.setRow(0, 1, B00110000);
-  lc.setRow(0, 2, B01111110);
-  lc.setRow(0, 3, B01111110);
-  lc.setRow(0, 4, B00000110);
-  lc.setRow(0, 5, B00000000);
-  lc.setRow(1, 3, B11000011);
-  lc.setRow(1, 4, B11000011);
-  lc.setRow(1, 0, B00001011);
-  lc.setRow(1, 1, B00001011);
-  lc.setRow(1, 2, B00001011);
-  delay(30);
-  lc.setRow(0, 0, B00000000);
-  lc.setRow(0, 1, B00000000);
-  lc.setRow(0, 2, B01111110);
-  lc.setRow(0, 3, B01111110);
-  lc.setRow(0, 4, B00000000);
-  lc.setRow(0, 5, B00000000);
-  lc.setRow(1, 3, B10000011);
-  lc.setRow(1, 4, B10000011);
-  lc.setRow(1, 0, B00001001);
-  lc.setRow(1, 1, B00001001);
-  lc.setRow(1, 2, B00001001);
-  delay(55);
-  lc.setRow(0, 0, B00000000);
-  lc.setRow(0, 1, B00000000);
-  lc.setRow(0, 2, B01111000);
-  lc.setRow(0, 3, B01000000);
-  lc.setRow(0, 4, B00000000);
-  lc.setRow(0, 5, B00000000);
-  lc.setRow(1, 3, B10000001);
-  lc.setRow(1, 4, B10000001);
-  lc.setRow(1, 0, B00000001);
-  lc.setRow(1, 1, B00000001);
-  lc.setRow(1, 2, B00000001);
-  delay(30);
-  lc.setRow(0, 0, B00000000);
-  lc.setRow(0, 1, B00000000);
-  lc.setRow(0, 2, B00110000);
-  lc.setRow(0, 3, B00000110);
-  lc.setRow(0, 4, B00000000);
-  lc.setRow(0, 5, B00000000);
-  lc.setRow(1, 3, B00000001);
-  lc.setRow(1, 4, B00000001);
-  lc.setRow(1, 0, B00000000);
-  lc.setRow(1, 1, B00000000);
-  lc.setRow(1, 2, B00000000);
-  delay(30);
-  lc.setRow(0, 0, B00000000);
-  lc.setRow(0, 1, B00000000);
-  lc.setRow(0, 2, B00000000);
-  lc.setRow(0, 3, B00000000);
-  lc.setRow(0, 4, B00000000);
-  lc.setRow(0, 5, B00000000);
-  lc.setRow(1, 3, B00000000);
-  lc.setRow(1, 4, B00000000);
-  lc.setRow(1, 0, B00000000);
-  lc.setRow(1, 1, B00000000);
-  lc.setRow(1, 2, B00000000);
+  const uint8_t N = sizeof(DISPLAY_FADE_FRAMES) / sizeof(DISPLAY_FADE_FRAMES[0]);
+  for (uint8_t i = 0; i < N; i++) {
+    renderAnimFrame(&DISPLAY_FADE_FRAMES[i]);
+  }
   delay(1000);
 }
 
@@ -1026,7 +982,11 @@ void loop() {
   }
 }
 
-void (*reboot)(void) = 0;
+void reboot() {
+  // Reset propre via le watchdog (vs jump a 0 qui ne reset pas les peripheriques)
+  wdt_enable(WDTO_15MS);
+  while (1) {}
+}
 
 void click1() {
   veille();
@@ -1191,8 +1151,10 @@ void handleMenu(int menu, int increment, int digitPosition, bool isDayMenu = fal
         currentDays--;
       }
       totalsectime = (currentDays * 86400) + (totalsectime % 86400);
-    } else {
+    } else if (totalsectime >= (unsigned long)increment) {
       totalsectime -= increment;
+    } else {
+      totalsectime = 0;
     }
 
     delayIncrement(false);
@@ -1212,12 +1174,13 @@ void normal() {
 
   // mise en route minuteur par double click BP_POWER
   if (BP_POWER_STATUS == true) {
-    while (i == 0) {
+    if (firstStartup) {
       strip.show();
       BP_VORTEX_STATUS = false;
       startMusique();
       genserSequence();
       displayWrap();
+      waitMs(START_OUTRO_DELAY_MS);  // synchro fin du clip MP3 d'activation
       lc.clearDisplay(0);
       lc.clearDisplay(1);
       showTime();
@@ -1225,13 +1188,21 @@ void normal() {
       lc.setLed(0, 6, 2, true);
       lc.setLed(0, 6, 3, true);
       lc.setLed(0, 6, 4, true);
-      i++;
-      byte vortex = 0;
-      break;
+      firstStartup = false;
     }
 
     if ((running) && (totalsectime_slide != 0)) {
-      mp3_play();
+      // Activation: LEDs blanches emetteur + bip avant le mp3
+      lc.setLed(1, 7, 2, true);
+      lc.setLed(1, 7, 3, true);
+      customTone(3000, 1500);
+      delay(1500);
+      lc.setLed(1, 7, 2, false);
+      lc.setLed(1, 7, 3, false);
+
+      mp3_play_physical(1);  // 0001.mp3 = son de vortex
+      waitMs(VORTEX_MP3_DURATION_MS);  // attendre la fin du 0001.mp3 avant le countdown
+
       while ((vortex == 0) && (BP_START_STATUS == true) && (totalsectime_slide != 0)) {
         animation_normal();
         button1.tick();
@@ -1241,7 +1212,9 @@ void normal() {
         unsigned long time_now = millis();
 
         unsigned long totalsectime_save;
-        unsigned long totalsectime_reste = totalsectime_slide - totalsectime;
+        unsigned long totalsectime_reste = (totalsectime_slide > totalsectime)
+                                             ? (totalsectime_slide - totalsectime)
+                                             : 0;
 
         if (time_now - last_time >= 1000) {
           totalsectime++;
@@ -1250,8 +1223,8 @@ void normal() {
         }
 
         // End normal mode
-        if (totalsectime_reste <= 0) {
-          mp3_play();
+        if (totalsectime_reste == 0) {
+          mp3_play_physical(1);  // 0001.mp3 = son de vortex
           totalsectime = 0;
           totalsectime_slide = 0;
           totalsectime_reste = 0;
@@ -1273,7 +1246,7 @@ void normal() {
 
         // Enter in butnout mode
         if (digitalRead(BP_VORTEX) == LOW) {
-          mp3_play();
+          mp3_play_physical(1);  // 0001.mp3 = son de vortex
           vortex = 1;
           customTone(3000, 1000);
 
@@ -1357,8 +1330,8 @@ void normal() {
           showTime();
         }
 
-        if ((totalsectime >= 0 && totalsectime <= 1) && (digitalRead(BP_VORTEX) == LOW)) {
-          mp3_play();
+        if ((totalsectime <= 1) && (digitalRead(BP_VORTEX) == LOW)) {
+          mp3_play_physical(1);  // 0001.mp3 = son de vortex
           lc.setLed(1, 7, 1, true);
           lc.setLed(1, 7, 2, true);
           lc.setLed(1, 7, 3, true);
@@ -1375,7 +1348,7 @@ void normal() {
           reveille();
         }
 
-        if (totalsectime <= 0) {
+        if (totalsectime == 0) {
           showTime();
           vortex = 2;
           colorWipeUnified(Off, 100, false, false);
@@ -1445,6 +1418,11 @@ void normal() {
         showTime();
         menu = 0;
 
+        // Sauvegarde du temps lock en EEPROM (utilise put: ne re-ecrit pas
+        // si la valeur est identique -> preserve la duree de vie de la flash).
+        EEPROM.update(EEPROM_MAGIC_ADDR, EEPROM_MAGIC_VALUE);
+        EEPROM.put(EEPROM_TOTALSECTIME_SLIDE_ADDR, totalsectime_slide);
+
         if (totalsectime_slide != 0) {
           lc.setRow(0, 0, B01011011);  // S
           lc.setRow(0, 1, B00001110);  // L
@@ -1489,16 +1467,14 @@ void animation_burnout() {
     blinkLEDUnified(yellowLED);
   }
 
-  if ((totalsectime >= 0 && totalsectime <= 15)) {
+  if (totalsectime <= 15) {
     lc.setLed(1, 5, 4, true);
   } else {
     blinkLEDUnified(redLED);
   }
-  if (totalsectime == 10) {
-    while (k1 == 0) {
-      displayWrap();
-      k1++;
-    }
+  if (totalsectime == 10 && !wrapPlayedAt10s) {
+    displayWrap();
+    wrapPlayedAt10s = true;
   }
 
   if (totalsectime == 30) {
@@ -1575,13 +1551,8 @@ void animation_normal() {
     lc.setLed(1, 7, 2, false);
     lc.setLed(1, 7, 3, false);
   }
-
-  if (totalsectime <= 0) {
-    lc.setLed(1, 7, 2, true);
-    lc.setLed(1, 7, 3, true);
-    customTone(3000, 1500);
-    delay(1500);
-  }
+  // Le bloc d'activation (LEDs + bip 1.5s a totalsectime==0) a ete deplace
+  // dans normal() pour s'executer AVANT le mp3 d'activation.
 }
 
 void animation_29() {
@@ -1612,11 +1583,11 @@ void adafruit() {
   if (newVal != prevVal) {
     strip.setBrightness(10);
 
-    for (x = 0; x < newVal; x++) {
+    for (int x = 0; x < newVal; x++) {
       strip.setPixelColor(x, strip.Color(255, 0, 0));
     }
 
-    for (x = newVal; x < strip.numPixels(); x++) {
+    for (int x = newVal; x < strip.numPixels(); x++) {
       strip.setPixelColor(x, 0, 0, 0);
     }
 
@@ -1683,60 +1654,32 @@ void debounceVORTEX() {
   OLD_BP_VORTEX_STATUS = reading1;
 }
 
+void modeTestSetAll(byte segments, byte chenillard, bool ledsOn) {
+  // ecrans hhmmss/ddd + bargraphe
+  for (int row = 0; row < 6; row++) lc.setRow(0, row, segments);
+  for (int row = 0; row < 5; row++) lc.setRow(1, row, segments);
+  // colons
+  for (int col = 1; col <= 4; col++) lc.setLed(0, 6, col, ledsOn);
+  // chenillard extremites
+  lc.setRow(1, 6, chenillard);
+  // status LEDs (jaune/rouge/verte)
+  lc.setLed(1, 5, 3, ledsOn);
+  lc.setLed(1, 5, 4, ledsOn);
+  lc.setLed(1, 5, 5, ledsOn);
+  // emetteur
+  for (int col = 1; col <= 4; col++) lc.setLed(1, 7, col, ledsOn);
+}
+
 void mode_test() {
   strip.show();
-  lc.setRow(0, 0, B11111111);  // ecrans hhmmss ddd et baregraphe
-  lc.setRow(0, 1, B11111111);
-  lc.setRow(0, 2, B11111111);
-  lc.setRow(0, 3, B11111111);
-  lc.setRow(0, 4, B11111111);
-  lc.setRow(0, 5, B11111111);
-  lc.setRow(1, 0, B11111111);
-  lc.setRow(1, 1, B11111111);
-  lc.setRow(1, 2, B11111111);
-  lc.setRow(1, 3, B11111111);
-  lc.setRow(1, 4, B11111111);
-  lc.setLed(0, 6, 1, true);  // colons
-  lc.setLed(0, 6, 2, true);
-  lc.setLed(0, 6, 3, true);
-  lc.setLed(0, 6, 4, true);
-  lc.setRow(1, 6, B01111000);  // led extremiter chenillard
-  lc.setLed(1, 5, 3, true);    // jaune
-  lc.setLed(1, 5, 4, true);    // rouge
-  lc.setLed(1, 5, 5, true);    // verte
-  lc.setLed(1, 7, 4, true);    // emetteur
-  lc.setLed(1, 7, 1, true);
-  lc.setLed(1, 7, 2, true);
-  lc.setLed(1, 7, 3, true);
+  modeTestSetAll(B11111111, B01111000, true);
 
   customTone(3000, 5000);
   strip.fill(strip.Color(255, 0, 0), 0, 7);
 
   delay(10000);
 
-  lc.setRow(0, 0, B00000000);
-  lc.setRow(0, 1, B00000000);
-  lc.setRow(0, 2, B00000000);
-  lc.setRow(0, 3, B00000000);
-  lc.setRow(0, 4, B00000000);
-  lc.setRow(0, 5, B00000000);
-  lc.setRow(1, 0, B00000000);
-  lc.setRow(1, 1, B00000000);
-  lc.setRow(1, 2, B00000000);
-  lc.setRow(1, 3, B00000000);
-  lc.setRow(1, 4, B00000000);
-  lc.setLed(0, 6, 1, false);
-  lc.setLed(0, 6, 2, false);
-  lc.setLed(0, 6, 3, false);
-  lc.setLed(0, 6, 4, false);
-  lc.setRow(1, 6, B00000000);
-  lc.setLed(1, 5, 3, false);
-  lc.setLed(1, 5, 4, false);
-  lc.setLed(1, 5, 5, false);
-  lc.setLed(1, 7, 4, false);
-  lc.setLed(1, 7, 1, false);
-  lc.setLed(1, 7, 2, false);
-  lc.setLed(1, 7, 3, false);
+  modeTestSetAll(B00000000, B00000000, false);
   noTone(speaker);
   strip.fill(strip.Color(0, 0, 0), 0, 7);
 }
@@ -1753,26 +1696,43 @@ void menu_up() {
   }
 }
 
-int getBattery() {
-  float lecture = analogRead(BATTERYPIN);
-  float tension = (lecture / 1023.0) * 5.0;  // Conversion en tension
+// Lit Vcc en mV via la reference interne 1.1V (sans hardware externe).
+// Si Arduino est alimente direct par batterie LiPo, retourne la tension batterie.
+// Si alim USB ou regulateur 5V, retourne ~5000.
+long readVccMv() {
+  ADMUX = _BV(REFS0) | _BV(MUX3) | _BV(MUX2) | _BV(MUX1);  // 1.1V vs AVcc
+  delay(2);
+  ADCSRA |= _BV(ADSC);
+  while (bit_is_set(ADCSRA, ADSC)) {}
+  long result = ADCL;
+  result |= ADCH << 8;
+  if (result == 0) return -1;
+  return 1125300L / result;  // 1.1 * 1023 * 1000
+}
 
-  // Si en USB, ne pas calculer la batterie
-  if (tension > 4.2) {
-    return 100;
+// Lit le niveau de batterie. Strategie:
+// 1) Si Vcc < 4.8V -> alim direct par batterie, on lit Vcc.
+// 2) Sinon, on tente BATTERYPIN avec un diviseur de tension externe.
+// Retourne 0-100 (%) ou -1 si pas de mesure fiable (USB regule).
+int getBattery() {
+  long vccMv = readVccMv();
+
+  // Cas 1: alim direct batterie (Vcc varie avec la batterie)
+  if (vccMv > 0 && vccMv < 4800) {
+    float tension = vccMv / 1000.0f;
+    float pct = ((tension - TensionMin) / (TensionMax - TensionMin)) * 100;
+    return (int)constrain(pct, 0, 100);
   }
 
-  // Plage des valeurs
-  float minValue = TensionMin;
-  float maxValue = TensionMax;
-
-  // Conversion en pourcentage
-  float pourcentage = ((tension - minValue) / (maxValue - minValue)) * 100;
-
-  // Limite entre 0 et 100
-  pourcentage = constrain(pourcentage, 0, 100);
-
-  return (int)pourcentage;
+  // Cas 2: Vcc regule (USB / boost 5V) -> on essaie BATTERYPIN avec diviseur
+  int reading = analogRead(BATTERYPIN);
+  if (reading <= 5 || reading >= 1020) {
+    // pin flottant ou sature: pas de mesure fiable
+    return -1;
+  }
+  float tension = (reading / 1023.0f) * 5.0f;
+  float pct = ((tension - TensionMin) / (TensionMax - TensionMin)) * 100;
+  return (int)constrain(pct, 0, 100);
 }
 
 void batterie() {
@@ -1789,15 +1749,20 @@ void batterie() {
   lc.setRow(0, 5, B00111011);  // 'y'
   delay(1500);
 
-  //totalsectime = getBattery();
-  //showTime();
   int batteryLevel = getBattery();
   lc.setRow(0, 0, B00000000);
   lc.setRow(0, 1, B00000000);
   lc.setRow(0, 2, B00000000);
-  lc.setDigit(0, 3, batteryLevel / 100, false);
-  lc.setDigit(0, 4, (batteryLevel % 100) / 10, false);
-  lc.setDigit(0, 5, batteryLevel % 10, false);
+  if (batteryLevel < 0) {
+    // Pas de mesure fiable (alim USB sans diviseur) -> "USb"
+    lc.setRow(0, 3, B00111110);  // U
+    lc.setRow(0, 4, B01011011);  // S
+    lc.setRow(0, 5, B00011111);  // b
+  } else {
+    lc.setDigit(0, 3, batteryLevel / 100, false);
+    lc.setDigit(0, 4, (batteryLevel % 100) / 10, false);
+    lc.setDigit(0, 5, batteryLevel % 10, false);
+  }
   lc.setRow(1, 0, B00000000);
   lc.setRow(1, 1, B00000000);
   lc.setRow(1, 2, B00000000);
