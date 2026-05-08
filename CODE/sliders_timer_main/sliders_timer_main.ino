@@ -50,12 +50,27 @@ struct Bargraphe {
 };
 
 // Format generique pour les animations 7-segments stockees en PROGMEM:
-// 6 bytes matrix 0 (rows 0-5) + 5 bytes matrix 1 (rows 0-4) + delay (ms).
+// 6 bytes matrix 0 (rows 0-5) + 5 bytes matrix 1 (rows 0-4)
+// + tone optionnel (freq=0 -> pas de tone) + delay apres affichage.
 struct AnimFrame {
   uint8_t r0[6];
   uint8_t r1[5];
-  uint8_t delay_ms;
+  uint16_t tone_freq;  // 0 = pas de tone
+  uint8_t tone_dur;    // duree du tone en ms
+  uint8_t delay_ms;    // delay apres affichage
 };
+
+// Format pour genserSequence: pattern affiche-bip-attend-clear-attend.
+struct GenserFrame {
+  uint8_t r0[6];
+  uint8_t r1[5];
+  uint16_t hold_ms;        // delay avec frame affichee + tone
+  uint8_t clear_pause_ms;  // delay apres clear
+};
+
+// Prototypes (necessaire car les arguments par defaut ne sont pas captures
+// dans la forward declaration auto-generee par Arduino).
+void reveille(bool fadeIn = true);
 
 Adafruit_NeoPixel strip = Adafruit_NeoPixel(7, ADAFRUITPIN, NEO_GRB + NEO_KHZ800);
 int prevVal = 0;
@@ -286,6 +301,68 @@ void updatespeaker_pattern(int interval, int numBips, int pause) {
   }
 }
 
+// Texte de version qui defile sur les ecrans 7-segments au demarrage (1er
+// double-click power). Padding gauche/droite pour entree/sortie smooth.
+const char VERSION_TEXT[] PROGMEM = "         sliders timer replica by kenny v1.2         ";
+
+// Conversion d'un caractere ASCII en bitmap 7-segments (A-G, bit 6 = top).
+byte charToSeg(char c) {
+  switch (c) {
+    case ' ': return 0x00;
+    case '0': return 0x7E;
+    case '1': return 0x30;
+    case '2': return 0x6D;
+    case '3': return 0x79;
+    case '4': return 0x33;
+    case '5': return 0x5B;
+    case '6': return 0x5F;
+    case '7': return 0x70;
+    case '8': return 0x7F;
+    case '9': return 0x7B;
+    case 'a': return 0x77;
+    case 'b': return 0x1F;
+    case 'c': return 0x0D;
+    case 'd': return 0x3D;
+    case 'e': return 0x4F;
+    case 'f': return 0x47;
+    case 'h': return 0x17;
+    case 'i': return 0x10;
+    case 'k': return 0x37;
+    case 'l': return 0x0E;
+    case 'm': return 0x15;  // approximation (n minuscule)
+    case 'n': return 0x15;
+    case 'o': return 0x1D;
+    case 'p': return 0x67;
+    case 'r': return 0x05;
+    case 's': return 0x5B;
+    case 't': return 0x0F;
+    case 'u': return 0x1C;
+    case 'v': return 0x1C;  // approximation (u)
+    case 'y': return 0x3B;
+    case '.': return 0x80;  // decimal point seul
+    case '-': return 0x01;
+    default:  return 0x00;
+  }
+}
+
+// Defile le texte VERSION_TEXT sur les 9 ecrans (6 sur matrix 0 + 3 sur matrix 1).
+void scrollVersion() {
+  int len = strlen_P(VERSION_TEXT);
+  for (int pos = 0; pos <= len - 9; pos++) {
+    for (int i = 0; i < 6; i++) {
+      char c = pgm_read_byte(&VERSION_TEXT[pos + i]);
+      lc.setRow(0, i, charToSeg(c));
+    }
+    for (int i = 0; i < 3; i++) {
+      char c = pgm_read_byte(&VERSION_TEXT[pos + 6 + i]);
+      lc.setRow(1, i, charToSeg(c));
+    }
+    delay(150);
+  }
+  lc.clearDisplay(0);
+  lc.clearDisplay(1);
+}
+
 void startMusique() {
   // Joue le clip d'activation Sliders Timer via le DFPlayer Mini.
   // Fichier 0003.mp3 sur la carte SD.
@@ -293,224 +370,62 @@ void startMusique() {
   waitMs(START_INTRO_DELAY_MS);  // ecrans noirs au debut du clip (effet d'intro)
 }
 
-void genserSequence() {
+// Frames de genserSequence: 8 ecrans textes/scrambled successifs avec bip.
+// r1 dans l'ordre [0,1,2,3,4]. Tous les bips sont 5500 Hz / 50 ms.
+const GenserFrame GENSER_FRAMES[] PROGMEM = {
   // GEnSEr
-  // G
-  lc.setRow(0, 0, B01011110);
-  // E
-  lc.setChar(0, 1, 'E', false);
-  // n
-  lc.setRow(0, 2, 0x15);
-  // S(5)
-  lc.setChar(0, 3, '5', false);
-  // E
-  lc.setChar(0, 4, 'E', false);
-  // r
-  lc.setRow(0, 5, 0x05);
-  // bug
-  lc.setRow(1, 3, B10001000);
-  lc.setRow(1, 4, B10001000);
-  lc.setRow(1, 0, B01001001);
-  lc.setRow(1, 1, B00000011);
-  lc.setRow(1, 2, B01011110);
-  // bip
-  customTone(5500, 50);
-
-  delay(400);
-  // clear
-  lc.clearDisplay(0);
-  lc.clearDisplay(1);
-  noTone(speaker);
-  delay(40);
-
+  {{0x5E, 0x4F, 0x15, 0x5B, 0x4F, 0x05}, {0x49, 0x03, 0x5E, 0x88, 0x88}, 400, 40},
   // random 1
-  lc.setRow(0, 0, B01001001);
-  lc.setRow(0, 1, B00010101);
-  lc.setRow(0, 2, B00100011);
-  lc.setRow(0, 3, B00000011);
-  lc.setRow(0, 4, B01010100);
-  lc.setRow(0, 5, B01000011);
-  lc.setRow(1, 3, B10101010);
-  lc.setRow(1, 4, B10001010);
-  lc.setRow(1, 0, B00000101);
-  lc.setRow(1, 1, B01000000);
-  lc.setRow(1, 2, B01000000);
-  customTone(5500, 50);
-
-  delay(200);
-  // clear
-  lc.clearDisplay(0);
-  lc.clearDisplay(1);
-  noTone(speaker);
-  delay(40);
-
+  {{0x49, 0x15, 0x23, 0x03, 0x54, 0x43}, {0x05, 0x40, 0x40, 0xAA, 0x8A}, 200, 40},
   // CAluri
-  // C
-  lc.setRow(0, 0, B01001110);
-  // A
-  lc.setChar(0, 1, 'A', false);
-  // l(lowercase "L")
-  lc.setRow(0, 2, B00110000);
-  // u
-  lc.setRow(0, 3, B00011100);
-  // r
-  lc.setRow(0, 4, B00000101);
-  // i
-  lc.setRow(0, 5, B00010000);
-  lc.setRow(1, 3, B10000010);
-  lc.setRow(1, 4, B00001010);
-  lc.setRow(1, 0, B01000011);
-  lc.setRow(1, 1, B00001000);
-  lc.setRow(1, 2, B01010100);
-  // bip
-  customTone(5500, 50);
-
-  delay(200);
-  // clear
-  lc.clearDisplay(0);
-  lc.clearDisplay(1);
-  noTone(speaker);
-  delay(40);
-
-  // 4th Sequence
-  lc.setRow(0, 0, B00100011);
-  lc.setRow(0, 1, B00000011);
-  lc.setRow(0, 2, B01010100);
-  lc.setRow(0, 3, B01000011);
-  lc.setRow(0, 4, B00010011);
-  lc.setRow(0, 5, B00011001);
-  lc.setRow(1, 3, B10001001);
-  lc.setRow(1, 4, B01001010);
-  lc.setRow(1, 0, B00110000);
-  lc.setRow(1, 1, B01000001);
-  lc.setRow(1, 2, B01001110);
-  customTone(5500, 50);
-
-  delay(200);
-  // clear
-  lc.clearDisplay(0);
-  lc.clearDisplay(1);
-  noTone(speaker);
-  delay(40);
-
-  // Second CAluri sequence
-  // C
-  lc.setRow(0, 0, B01001110);
-  // A
-  lc.setChar(0, 1, 'A', false);
-  // l(lowercase "L")
-  lc.setRow(0, 2, B00110000);
-  // u
-  lc.setRow(0, 3, B00011100);
-  // r
-  lc.setRow(0, 4, B00000101);
-  // i
-  lc.setRow(0, 5, B00010000);
-  lc.setRow(1, 3, B00101001);
-  lc.setRow(1, 4, B00001010);
-  lc.setRow(1, 0, B00101010);
-  lc.setRow(1, 1, B00011010);
-  lc.setRow(1, 2, B00011010);
-  // bip
-  customTone(5500, 50);
-
-  delay(200);
-  // clear
-  lc.clearDisplay(0);
-  lc.clearDisplay(1);
-  noTone(speaker);
-  delay(40);
-
-  // 6th Sequence
-  lc.setRow(0, 0, B00101010);
-  lc.setRow(0, 1, B00000011);
-  lc.setRow(0, 2, B00011010);
-  lc.setRow(0, 3, B01001000);
-  lc.setRow(0, 4, B01000001);
-  lc.setRow(0, 5, B01001001);
-  lc.setRow(1, 3, B00101001);
-  lc.setRow(1, 4, B00001010);
-  lc.setRow(1, 0, B00011001);
-  lc.setRow(1, 1, B00001001);
-  lc.setRow(1, 2, B00010011);
-  customTone(5500, 50);
-
-  delay(200);
-  // clear
-  lc.clearDisplay(0);
-  lc.clearDisplay(1);
-  noTone(speaker);
-  delay(40);
-
-  // 6th Sequence
-  lc.setRow(0, 0, B00010011);
-  lc.setRow(0, 1, B00011001);
-  lc.setRow(0, 2, B00100010);
-  lc.setRow(0, 3, B00011000);
-  lc.setRow(0, 4, B01000001);
-  lc.setRow(0, 5, B00100101);
-  lc.setRow(1, 3, B10010101);
-  lc.setRow(1, 4, B00100100);
-  lc.setRow(1, 0, B00110011);
-  lc.setRow(1, 1, B00110111);
-  lc.setRow(1, 2, B10001001);
-  customTone(5500, 50);
-
-  delay(200);
-  // clear
-  lc.clearDisplay(0);
-  lc.clearDisplay(1);
-  noTone(speaker);
-  delay(40);
-
+  {{0x4E, 0x77, 0x30, 0x1C, 0x05, 0x10}, {0x43, 0x08, 0x54, 0x82, 0x0A}, 200, 40},
+  // 4th
+  {{0x23, 0x03, 0x54, 0x43, 0x13, 0x19}, {0x30, 0x41, 0x4E, 0x89, 0x4A}, 200, 40},
+  // Second CAluri
+  {{0x4E, 0x77, 0x30, 0x1C, 0x05, 0x10}, {0x2A, 0x1A, 0x1A, 0x29, 0x0A}, 200, 40},
+  // 6th
+  {{0x2A, 0x03, 0x1A, 0x48, 0x41, 0x49}, {0x19, 0x09, 0x13, 0x29, 0x0A}, 200, 40},
+  // 7th
+  {{0x13, 0x19, 0x22, 0x18, 0x41, 0x25}, {0x33, 0x37, 0x89, 0x95, 0x24}, 200, 40},
   // KEnnY
-  // K
-  lc.setRow(0, 0, B00110111);
-  // E
-  lc.setChar(0, 1, 'E', false);
-  // n
-  lc.setRow(0, 2, 0x15);
-  // n
-  lc.setRow(0, 3, 0x15);
-  // Y
-  lc.setRow(0, 4, B00110011);
-  //-
-  lc.setRow(0, 5, B00000001);
-  // bug
-  lc.setRow(1, 3, B10001001);
-  lc.setRow(1, 4, B10001001);
-  lc.setRow(1, 0, B00100001);
-  lc.setRow(1, 1, B00010001);
-  lc.setRow(1, 2, B01000001);
-  // bip
-  customTone(5500, 50);
+  {{0x37, 0x4F, 0x15, 0x15, 0x33, 0x01}, {0x21, 0x11, 0x41, 0x89, 0x89}, 350, 75}
+};
 
-  delay(350);
-  // clear
-  lc.clearDisplay(0);
-  lc.clearDisplay(1);
-  noTone(speaker);
-  delay(75);
+void genserSequence() {
+  GenserFrame f;
+  const uint8_t N = sizeof(GENSER_FRAMES) / sizeof(GENSER_FRAMES[0]);
+  for (uint8_t i = 0; i < N; i++) {
+    memcpy_P(&f, &GENSER_FRAMES[i], sizeof(GenserFrame));
+    for (uint8_t r = 0; r < 6; r++) lc.setRow(0, r, f.r0[r]);
+    for (uint8_t r = 0; r < 5; r++) lc.setRow(1, r, f.r1[r]);
+    customTone(5500, 50);
+    delay(f.hold_ms);
+    lc.clearDisplay(0);
+    lc.clearDisplay(1);
+    noTone(speaker);
+    delay(f.clear_pause_ms);
+  }
 }
 
 void renderAnimFrame(const AnimFrame *frame_pgm) {
   AnimFrame f;
   memcpy_P(&f, frame_pgm, sizeof(AnimFrame));
+  if (f.tone_freq) customTone(f.tone_freq, f.tone_dur);
   for (uint8_t r = 0; r < 6; r++) lc.setRow(0, r, f.r0[r]);
   for (uint8_t r = 0; r < 5; r++) lc.setRow(1, r, f.r1[r]);
   if (f.delay_ms) delay(f.delay_ms);
 }
 
 const AnimFrame DISPLAY_FADE_FRAMES[] PROGMEM = {
-  {{0x78, 0x7E, 0x7E, 0x7E, 0x7E, 0x1E}, {0x7F, 0x7F, 0x7F, 0xFF, 0xFF}, 30},
-  {{0x30, 0x7E, 0x7E, 0x7E, 0x80, 0x06}, {0x3F, 0x3F, 0x3F, 0xEF, 0xEF}, 30},
-  {{0x00, 0x7E, 0x7E, 0x7E, 0x7E, 0x00}, {0x2F, 0x2F, 0x2F, 0xE7, 0xE7}, 30},
-  {{0x00, 0x78, 0x7E, 0x7E, 0x40, 0x00}, {0x2B, 0x2B, 0x2B, 0xC7, 0xC7}, 30},
-  {{0x00, 0x30, 0x7E, 0x7E, 0x06, 0x00}, {0x0B, 0x0B, 0x0B, 0xC3, 0xC3}, 30},
-  {{0x00, 0x00, 0x7E, 0x7E, 0x00, 0x00}, {0x09, 0x09, 0x09, 0x83, 0x83}, 55},
-  {{0x00, 0x00, 0x78, 0x40, 0x00, 0x00}, {0x01, 0x01, 0x01, 0x81, 0x81}, 30},
-  {{0x00, 0x00, 0x30, 0x06, 0x00, 0x00}, {0x00, 0x00, 0x00, 0x01, 0x01}, 30},
-  {{0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, {0x00, 0x00, 0x00, 0x00, 0x00}, 0}
+  {{0x78, 0x7E, 0x7E, 0x7E, 0x7E, 0x1E}, {0x7F, 0x7F, 0x7F, 0xFF, 0xFF}, 0, 0, 30},
+  {{0x30, 0x7E, 0x7E, 0x7E, 0x80, 0x06}, {0x3F, 0x3F, 0x3F, 0xEF, 0xEF}, 0, 0, 30},
+  {{0x00, 0x7E, 0x7E, 0x7E, 0x7E, 0x00}, {0x2F, 0x2F, 0x2F, 0xE7, 0xE7}, 0, 0, 30},
+  {{0x00, 0x78, 0x7E, 0x7E, 0x40, 0x00}, {0x2B, 0x2B, 0x2B, 0xC7, 0xC7}, 0, 0, 30},
+  {{0x00, 0x30, 0x7E, 0x7E, 0x06, 0x00}, {0x0B, 0x0B, 0x0B, 0xC3, 0xC3}, 0, 0, 30},
+  {{0x00, 0x00, 0x7E, 0x7E, 0x00, 0x00}, {0x09, 0x09, 0x09, 0x83, 0x83}, 0, 0, 55},
+  {{0x00, 0x00, 0x78, 0x40, 0x00, 0x00}, {0x01, 0x01, 0x01, 0x81, 0x81}, 0, 0, 30},
+  {{0x00, 0x00, 0x30, 0x06, 0x00, 0x00}, {0x00, 0x00, 0x00, 0x01, 0x01}, 0, 0, 30},
+  {{0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, {0x00, 0x00, 0x00, 0x00, 0x00}, 0, 0,  0}
 };
 
 void displayFade() {
@@ -522,425 +437,90 @@ void displayFade() {
   delay(1000);
 }
 
+// Frames de displayWrap (effet "wrap" sci-fi). Reordonnees: r1 dans l'ordre [0,1,2,3,4].
+// Pour les frames partielles du code original:
+//   Frame 0 -> r1[0..2] = 0 (etat initial)
+//   Frame 7 -> r1[0..2] herites de frame 6 (=0x40)
+//   Frame 13 -> r0[0..5] herites de frame 12 (=0x02)
+const AnimFrame DISPLAY_WRAP_FRAMES[] PROGMEM = {
+  {{0x02, 0x02, 0x02, 0x02, 0x02, 0x02}, {0x00, 0x00, 0x00, 0x53, 0x5A}, 5500, 100, 30},
+  {{0x40, 0x40, 0x40, 0x40, 0x40, 0x40}, {0x02, 0x02, 0x02, 0x69, 0x40}, 5500, 100, 30},
+  {{0x20, 0x20, 0x20, 0x20, 0x20, 0x20}, {0x04, 0x04, 0x04, 0x25, 0x48}, 5500, 100, 30},
+  {{0x10, 0x10, 0x10, 0x10, 0x10, 0x10}, {0x08, 0x08, 0x08, 0xA5, 0xD8}, 5500, 100, 30},
+  {{0x08, 0x08, 0x08, 0x08, 0x08, 0x08}, {0x10, 0x10, 0x10, 0xA5, 0xDA}, 5500, 100, 30},
+  {{0x04, 0x04, 0x04, 0x04, 0x04, 0x04}, {0x20, 0x20, 0x20, 0x8D, 0xAA}, 5500, 100, 30},
+  {{0x02, 0x02, 0x02, 0x02, 0x02, 0x02}, {0x40, 0x40, 0x40, 0x57, 0x36}, 5500, 100, 30},
+  {{0x40, 0x40, 0x40, 0x40, 0x40, 0x40}, {0x40, 0x40, 0x40, 0x54, 0xB6}, 5500, 100, 30},
+  {{0x20, 0x20, 0x20, 0x20, 0x20, 0x20}, {0x02, 0x02, 0x02, 0x44, 0x82}, 5500, 100, 30},
+  {{0x10, 0x10, 0x10, 0x10, 0x10, 0x10}, {0x04, 0x04, 0x04, 0x55, 0x84}, 5500, 100, 30},
+  {{0x08, 0x08, 0x08, 0x08, 0x08, 0x08}, {0x08, 0x08, 0x08, 0x25, 0x8D}, 2500, 100, 30},
+  {{0x04, 0x04, 0x04, 0x04, 0x04, 0x04}, {0x10, 0x10, 0x10, 0x57, 0xB6}, 2500, 100, 30},
+  {{0x02, 0x02, 0x02, 0x02, 0x02, 0x02}, {0x20, 0x20, 0x20, 0x44, 0x48}, 2500, 100, 30},
+  {{0x02, 0x02, 0x02, 0x02, 0x02, 0x02}, {0x40, 0x40, 0x40, 0x55, 0x84}, 2500, 100, 30}
+};
+
 void displayWrap() {
-  delay(30);
-  customTone(5500, 100);
-  lc.setRow(0, 0, B00000010);
-  lc.setRow(0, 1, B00000010);
-  lc.setRow(0, 2, B00000010);
-  lc.setRow(0, 3, B00000010);
-  lc.setRow(0, 4, B00000010);
-  lc.setRow(0, 5, B00000010);
-  lc.setRow(1, 3, B01010011);
-  lc.setRow(1, 4, B01011010);
-  noTone(speaker);
-  delay(30);
-  customTone(5500, 100);
-  lc.setRow(0, 0, B01000000);
-  lc.setRow(0, 1, B01000000);
-  lc.setRow(0, 2, B01000000);
-  lc.setRow(0, 3, B01000000);
-  lc.setRow(0, 4, B01000000);
-  lc.setRow(0, 5, B01000000);
-  lc.setRow(1, 3, B01101001);
-  lc.setRow(1, 4, B01000000);
-  lc.setRow(1, 0, B00000010);
-  lc.setRow(1, 1, B00000010);
-  lc.setRow(1, 2, B00000010);
-  noTone(speaker);
-  delay(30);
-  customTone(5500, 100);
-  lc.setRow(0, 0, B00100000);
-  lc.setRow(0, 1, B00100000);
-  lc.setRow(0, 2, B00100000);
-  lc.setRow(0, 3, B00100000);
-  lc.setRow(0, 4, B00100000);
-  lc.setRow(0, 5, B00100000);
-  lc.setRow(1, 3, B00100101);
-  lc.setRow(1, 4, B01001000);
-  lc.setRow(1, 0, B00000100);
-  lc.setRow(1, 1, B00000100);
-  lc.setRow(1, 2, B00000100);
-  noTone(speaker);
-  delay(30);
-  customTone(5500, 100);
-  lc.setRow(0, 0, B00010000);
-  lc.setRow(0, 1, B00010000);
-  lc.setRow(0, 2, B00010000);
-  lc.setRow(0, 3, B00010000);
-  lc.setRow(0, 4, B00010000);
-  lc.setRow(0, 5, B00010000);
-  lc.setRow(1, 3, B10100101);
-  lc.setRow(1, 4, B11011000);
-  lc.setRow(1, 0, B00001000);
-  lc.setRow(1, 1, B00001000);
-  lc.setRow(1, 2, B00001000);
-  noTone(speaker);
-  delay(30);
-  customTone(5500, 100);
-  lc.setRow(0, 0, B00001000);
-  lc.setRow(0, 1, B00001000);
-  lc.setRow(0, 2, B00001000);
-  lc.setRow(0, 3, B00001000);
-  lc.setRow(0, 4, B00001000);
-  lc.setRow(0, 5, B00001000);
-  lc.setRow(1, 3, B10100101);
-  lc.setRow(1, 4, B11011010);
-  lc.setRow(1, 0, B00010000);
-  lc.setRow(1, 1, B00010000);
-  lc.setRow(1, 2, B00010000);
-  noTone(speaker);
-  delay(30);
-  customTone(5500, 100);
-  lc.setRow(0, 0, B00000100);
-  lc.setRow(0, 1, B00000100);
-  lc.setRow(0, 2, B00000100);
-  lc.setRow(0, 3, B00000100);
-  lc.setRow(0, 4, B00000100);
-  lc.setRow(0, 5, B00000100);
-  lc.setRow(1, 3, B10001101);
-  lc.setRow(1, 4, B10101010);
-  lc.setRow(1, 0, B00100000);
-  lc.setRow(1, 1, B00100000);
-  lc.setRow(1, 2, B00100000);
-  noTone(speaker);
-  delay(30);
-  customTone(5500, 100);
-  lc.setRow(0, 0, B00000010);
-  lc.setRow(0, 1, B00000010);
-  lc.setRow(0, 2, B00000010);
-  lc.setRow(0, 3, B00000010);
-  lc.setRow(0, 4, B00000010);
-  lc.setRow(0, 5, B00000010);
-  lc.setRow(1, 3, B01010111);
-  lc.setRow(1, 4, B00110110);
-  lc.setRow(1, 0, B01000000);
-  lc.setRow(1, 1, B01000000);
-  lc.setRow(1, 2, B01000000);
-  noTone(speaker);
-  delay(30);
-  customTone(5500, 100);
-  lc.setRow(0, 0, B01000000);
-  lc.setRow(0, 1, B01000000);
-  lc.setRow(0, 2, B01000000);
-  lc.setRow(0, 3, B01000000);
-  lc.setRow(0, 4, B01000000);
-  lc.setRow(0, 5, B01000000);
-  lc.setRow(1, 3, B01010100);
-  lc.setRow(1, 4, B10110110);
-  noTone(speaker);
-  delay(30);
-  customTone(5500, 100);
-  lc.setRow(0, 0, B00100000);
-  lc.setRow(0, 1, B00100000);
-  lc.setRow(0, 2, B00100000);
-  lc.setRow(0, 3, B00100000);
-  lc.setRow(0, 4, B00100000);
-  lc.setRow(0, 5, B00100000);
-  lc.setRow(1, 3, B01000100);
-  lc.setRow(1, 4, B10000010);
-  lc.setRow(1, 0, B00000010);
-  lc.setRow(1, 1, B00000010);
-  lc.setRow(1, 2, B00000010);
-  noTone(speaker);
-  delay(30);
-  customTone(5500, 100);
-  lc.setRow(0, 0, B00010000);
-  lc.setRow(0, 1, B00010000);
-  lc.setRow(0, 2, B00010000);
-  lc.setRow(0, 3, B00010000);
-  lc.setRow(0, 4, B00010000);
-  lc.setRow(0, 5, B00010000);
-  lc.setRow(1, 3, B01010101);
-  lc.setRow(1, 4, B10000100);
-  lc.setRow(1, 0, B00000100);
-  lc.setRow(1, 1, B00000100);
-  lc.setRow(1, 2, B00000100);
-  noTone(speaker);
-  delay(30);
-  customTone(2500, 100);
-  lc.setRow(0, 0, B00001000);
-  lc.setRow(0, 1, B00001000);
-  lc.setRow(0, 2, B00001000);
-  lc.setRow(0, 3, B00001000);
-  lc.setRow(0, 4, B00001000);
-  lc.setRow(0, 5, B00001000);
-  lc.setRow(1, 3, B00100101);
-  lc.setRow(1, 4, B10001101);
-  lc.setRow(1, 0, B00001000);
-  lc.setRow(1, 1, B00001000);
-  lc.setRow(1, 2, B00001000);
-  noTone(speaker);
-  delay(30);
-  customTone(2500, 100);
-  lc.setRow(0, 0, B00000100);
-  lc.setRow(0, 1, B00000100);
-  lc.setRow(0, 2, B00000100);
-  lc.setRow(0, 3, B00000100);
-  lc.setRow(0, 4, B00000100);
-  lc.setRow(0, 5, B00000100);
-  lc.setRow(1, 3, B01010111);
-  lc.setRow(1, 4, B10110110);
-  lc.setRow(1, 0, B00010000);
-  lc.setRow(1, 1, B00010000);
-  lc.setRow(1, 2, B00010000);
-  noTone(speaker);
-  delay(30);
-  customTone(2500, 100);
-  lc.setRow(0, 0, B00000010);
-  lc.setRow(0, 1, B00000010);
-  lc.setRow(0, 2, B00000010);
-  lc.setRow(0, 3, B00000010);
-  lc.setRow(0, 4, B00000010);
-  lc.setRow(0, 5, B00000010);
-  lc.setRow(1, 3, B01000100);
-  lc.setRow(1, 4, B01001000);
-  lc.setRow(1, 0, B00100000);
-  lc.setRow(1, 1, B00100000);
-  lc.setRow(1, 2, B00100000);
-  noTone(speaker);
-  delay(30);
-  customTone(2500, 100);
-  lc.setRow(1, 3, B01010101);
-  lc.setRow(1, 4, B10000100);
-  lc.setRow(1, 0, B01000000);
-  lc.setRow(1, 1, B01000000);
-  lc.setRow(1, 2, B01000000);
-  noTone(speaker);
-  delay(30);
+  delay(30);  // delay initial avant la 1ere frame
+  const uint8_t N = sizeof(DISPLAY_WRAP_FRAMES) / sizeof(DISPLAY_WRAP_FRAMES[0]);
+  for (uint8_t i = 0; i < N; i++) {
+    renderAnimFrame(&DISPLAY_WRAP_FRAMES[i]);
+  }
   showTime();
 }
 
+// Frames de wrapBurnout (matrix 0 rows 0-5 uniquement). Matrix 1 + row 6
+// initialises une seule fois au debut de la fonction.
+const uint8_t WRAP_BURNOUT_R0_FRAMES[][6] PROGMEM = {
+  {0x40, 0x00, 0x00, 0x00, 0x00, 0x00},
+  {0x40, 0x40, 0x00, 0x00, 0x00, 0x00},
+  {0x40, 0x40, 0x40, 0x00, 0x00, 0x00},
+  {0x40, 0x40, 0x40, 0x40, 0x00, 0x00},
+  {0x40, 0x40, 0x40, 0x40, 0x40, 0x00},
+  {0x40, 0x40, 0x40, 0x40, 0x40, 0x40},
+  {0x40, 0x40, 0x40, 0x40, 0x40, 0x60},
+  {0x40, 0x40, 0x40, 0x40, 0x40, 0x70},
+  {0x40, 0x40, 0x40, 0x40, 0x40, 0x78},
+  {0x40, 0x40, 0x40, 0x40, 0x48, 0x78},
+  {0x40, 0x40, 0x40, 0x48, 0x48, 0x78},
+  {0x40, 0x40, 0x48, 0x48, 0x48, 0x78},
+  {0x40, 0x48, 0x48, 0x48, 0x48, 0x78},
+  {0x48, 0x48, 0x48, 0x48, 0x48, 0x78},
+  {0x4C, 0x48, 0x48, 0x48, 0x48, 0x78},
+  {0x4E, 0x48, 0x48, 0x48, 0x48, 0x78},
+  {0x0E, 0x48, 0x48, 0x48, 0x48, 0x78},
+  {0x0E, 0x08, 0x48, 0x48, 0x48, 0x78},
+  {0x0E, 0x08, 0x08, 0x48, 0x48, 0x78},
+  {0x0E, 0x08, 0x08, 0x08, 0x48, 0x78},
+  {0x0E, 0x08, 0x08, 0x08, 0x08, 0x78},
+  {0x0E, 0x08, 0x08, 0x08, 0x08, 0x38},
+  {0x0E, 0x08, 0x08, 0x08, 0x08, 0x18},
+  {0x0E, 0x08, 0x08, 0x08, 0x08, 0x08},
+  {0x0E, 0x08, 0x08, 0x08, 0x08, 0x00},
+  {0x0E, 0x08, 0x08, 0x08, 0x00, 0x00},
+  {0x0E, 0x08, 0x08, 0x00, 0x00, 0x00},
+  {0x0E, 0x08, 0x00, 0x00, 0x00, 0x00},
+  {0x0E, 0x00, 0x00, 0x00, 0x00, 0x00},
+  {0x06, 0x00, 0x00, 0x00, 0x00, 0x00},
+  {0x02, 0x00, 0x00, 0x00, 0x00, 0x00},
+  {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+};
+
 void wrapBurnout() {
-  lc.setRow(0, 0, B01000000);
-  lc.setRow(0, 1, B00000000);
-  lc.setRow(0, 2, B00000000);
-  lc.setRow(0, 3, B00000000);
-  lc.setRow(0, 4, B00000000);
-  lc.setRow(0, 5, B00000000);
-  lc.setRow(1, 0, B01101101);
-  lc.setRow(1, 1, B11111011);
-  lc.setRow(1, 2, B00111011);
-  lc.setRow(1, 6, B01111000);
-  lc.setRow(1, 3, B00000000);
-  lc.setRow(1, 4, B00000000);
-  delay(50);
-  lc.setRow(0, 0, B01000000);
-  lc.setRow(0, 1, B01000000);
-  lc.setRow(0, 2, B00000000);
-  lc.setRow(0, 3, B00000000);
-  lc.setRow(0, 4, B00000000);
-  lc.setRow(0, 5, B00000000);
-  delay(50);
-  lc.setRow(0, 0, B01000000);
-  lc.setRow(0, 1, B01000000);
-  lc.setRow(0, 2, B01000000);
-  lc.setRow(0, 3, B00000000);
-  lc.setRow(0, 4, B00000000);
-  lc.setRow(0, 5, B00000000);
-  delay(50);
-  lc.setRow(0, 0, B01000000);
-  lc.setRow(0, 1, B01000000);
-  lc.setRow(0, 2, B01000000);
-  lc.setRow(0, 3, B01000000);
-  lc.setRow(0, 4, B00000000);
-  lc.setRow(0, 5, B00000000);
-  delay(50);
-  lc.setRow(0, 0, B01000000);
-  lc.setRow(0, 1, B01000000);
-  lc.setRow(0, 2, B01000000);
-  lc.setRow(0, 3, B01000000);
-  lc.setRow(0, 4, B01000000);
-  lc.setRow(0, 5, B00000000);
-  delay(50);
-  lc.setRow(0, 0, B01000000);
-  lc.setRow(0, 1, B01000000);
-  lc.setRow(0, 2, B01000000);
-  lc.setRow(0, 3, B01000000);
-  lc.setRow(0, 4, B01000000);
-  lc.setRow(0, 5, B01000000);
-  delay(50);
-  lc.setRow(0, 0, B01000000);
-  lc.setRow(0, 1, B01000000);
-  lc.setRow(0, 2, B01000000);
-  lc.setRow(0, 3, B01000000);
-  lc.setRow(0, 4, B01000000);
-  lc.setRow(0, 5, B01100000);
-  delay(50);
-  lc.setRow(0, 0, B01000000);
-  lc.setRow(0, 1, B01000000);
-  lc.setRow(0, 2, B01000000);
-  lc.setRow(0, 3, B01000000);
-  lc.setRow(0, 4, B01000000);
-  lc.setRow(0, 5, B01110000);
-  delay(50);
-  lc.setRow(0, 0, B01000000);
-  lc.setRow(0, 1, B01000000);
-  lc.setRow(0, 2, B01000000);
-  lc.setRow(0, 3, B01000000);
-  lc.setRow(0, 4, B01000000);
-  lc.setRow(0, 5, B01111000);
-  delay(50);
-  lc.setRow(0, 0, B01000000);
-  lc.setRow(0, 1, B01000000);
-  lc.setRow(0, 2, B01000000);
-  lc.setRow(0, 3, B01000000);
-  lc.setRow(0, 4, B01001000);
-  lc.setRow(0, 5, B01111000);
-  delay(50);
-  lc.setRow(0, 0, B01000000);
-  lc.setRow(0, 1, B01000000);
-  lc.setRow(0, 2, B01000000);
-  lc.setRow(0, 3, B01001000);
-  lc.setRow(0, 4, B01001000);
-  lc.setRow(0, 5, B01111000);
-  delay(50);
-  lc.setRow(0, 0, B01000000);
-  lc.setRow(0, 1, B01000000);
-  lc.setRow(0, 2, B01001000);
-  lc.setRow(0, 3, B01001000);
-  lc.setRow(0, 4, B01001000);
-  lc.setRow(0, 5, B01111000);
-  delay(50);
-  lc.setRow(0, 0, B01000000);
-  lc.setRow(0, 1, B01001000);
-  lc.setRow(0, 2, B01001000);
-  lc.setRow(0, 3, B01001000);
-  lc.setRow(0, 4, B01001000);
-  lc.setRow(0, 5, B01111000);
-  delay(50);
-  lc.setRow(0, 0, B01001000);
-  lc.setRow(0, 1, B01001000);
-  lc.setRow(0, 2, B01001000);
-  lc.setRow(0, 3, B01001000);
-  lc.setRow(0, 4, B01001000);
-  lc.setRow(0, 5, B01111000);
-  delay(50);
-  lc.setRow(0, 0, B01001100);
-  lc.setRow(0, 1, B01001000);
-  lc.setRow(0, 2, B01001000);
-  lc.setRow(0, 3, B01001000);
-  lc.setRow(0, 4, B01001000);
-  lc.setRow(0, 5, B01111000);
-  delay(50);
-  lc.setRow(0, 0, B01001110);
-  lc.setRow(0, 1, B01001000);
-  lc.setRow(0, 2, B01001000);
-  lc.setRow(0, 3, B01001000);
-  lc.setRow(0, 4, B01001000);
-  lc.setRow(0, 5, B01111000);
-  delay(50);
-  lc.setRow(0, 0, B00001110);
-  lc.setRow(0, 1, B01001000);
-  lc.setRow(0, 2, B01001000);
-  lc.setRow(0, 3, B01001000);
-  lc.setRow(0, 4, B01001000);
-  lc.setRow(0, 5, B01111000);
-  delay(50);
-  lc.setRow(0, 0, B00001110);
-  lc.setRow(0, 1, B00001000);
-  lc.setRow(0, 2, B01001000);
-  lc.setRow(0, 3, B01001000);
-  lc.setRow(0, 4, B01001000);
-  lc.setRow(0, 5, B01111000);
-  delay(50);
-  lc.setRow(0, 0, B00001110);
-  lc.setRow(0, 1, B00001000);
-  lc.setRow(0, 2, B00001000);
-  lc.setRow(0, 3, B01001000);
-  lc.setRow(0, 4, B01001000);
-  lc.setRow(0, 5, B01111000);
-  delay(50);
-  lc.setRow(0, 0, B00001110);
-  lc.setRow(0, 1, B00001000);
-  lc.setRow(0, 2, B00001000);
-  lc.setRow(0, 3, B00001000);
-  lc.setRow(0, 4, B01001000);
-  lc.setRow(0, 5, B01111000);
-  delay(50);
-  lc.setRow(0, 0, B00001110);
-  lc.setRow(0, 1, B00001000);
-  lc.setRow(0, 2, B00001000);
-  lc.setRow(0, 3, B00001000);
-  lc.setRow(0, 4, B00001000);
-  lc.setRow(0, 5, B01111000);
-  delay(50);
-  lc.setRow(0, 0, B00001110);
-  lc.setRow(0, 1, B00001000);
-  lc.setRow(0, 2, B00001000);
-  lc.setRow(0, 3, B00001000);
-  lc.setRow(0, 4, B00001000);
-  lc.setRow(0, 5, B00111000);
-  delay(50);
-  lc.setRow(0, 0, B00001110);
-  lc.setRow(0, 1, B00001000);
-  lc.setRow(0, 2, B00001000);
-  lc.setRow(0, 3, B00001000);
-  lc.setRow(0, 4, B00001000);
-  lc.setRow(0, 5, B00011000);
-  delay(50);
-  lc.setRow(0, 0, B00001110);
-  lc.setRow(0, 1, B00001000);
-  lc.setRow(0, 2, B00001000);
-  lc.setRow(0, 3, B00001000);
-  lc.setRow(0, 4, B00001000);
-  lc.setRow(0, 5, B00001000);
-  delay(50);
-  lc.setRow(0, 0, B00001110);
-  lc.setRow(0, 1, B00001000);
-  lc.setRow(0, 2, B00001000);
-  lc.setRow(0, 3, B00001000);
-  lc.setRow(0, 4, B00001000);
-  lc.setRow(0, 5, B00000000);
-  delay(50);
-  lc.setRow(0, 0, B00001110);
-  lc.setRow(0, 1, B00001000);
-  lc.setRow(0, 2, B00001000);
-  lc.setRow(0, 3, B00001000);
-  lc.setRow(0, 4, B00000000);
-  lc.setRow(0, 5, B00000000);
-  delay(50);
-  lc.setRow(0, 0, B00001110);
-  lc.setRow(0, 1, B00001000);
-  lc.setRow(0, 2, B00001000);
-  lc.setRow(0, 3, B00000000);
-  lc.setRow(0, 4, B00000000);
-  lc.setRow(0, 5, B00000000);
-  delay(50);
-  lc.setRow(0, 0, B00001110);
-  lc.setRow(0, 1, B00001000);
-  lc.setRow(0, 2, B00000000);
-  lc.setRow(0, 3, B00000000);
-  lc.setRow(0, 4, B00000000);
-  lc.setRow(0, 5, B00000000);
-  delay(50);
-  lc.setRow(0, 0, B00001110);
-  lc.setRow(0, 1, B00000000);
-  lc.setRow(0, 2, B00000000);
-  lc.setRow(0, 3, B00000000);
-  lc.setRow(0, 4, B00000000);
-  lc.setRow(0, 5, B00000000);
-  delay(50);
-  lc.setRow(0, 0, B00000110);
-  lc.setRow(0, 1, B00000000);
-  lc.setRow(0, 2, B00000000);
-  lc.setRow(0, 3, B00000000);
-  lc.setRow(0, 4, B00000000);
-  lc.setRow(0, 5, B00000000);
-  delay(50);
-  lc.setRow(0, 0, B00000010);
-  lc.setRow(0, 1, B00000000);
-  lc.setRow(0, 2, B00000000);
-  lc.setRow(0, 3, B00000000);
-  lc.setRow(0, 4, B00000000);
-  lc.setRow(0, 5, B00000000);
-  delay(50);
-  lc.setRow(0, 0, B00000000);
-  lc.setRow(0, 1, B00000000);
-  lc.setRow(0, 2, B00000000);
-  lc.setRow(0, 3, B00000000);
-  lc.setRow(0, 4, B00000000);
-  lc.setRow(0, 5, B00000000);
+  // Init matrix 1 + row 6 (etat constant pour toutes les frames)
+  lc.setRow(1, 0, 0x6D);
+  lc.setRow(1, 1, 0xFB);
+  lc.setRow(1, 2, 0x3B);
+  lc.setRow(1, 6, 0x78);
+  lc.setRow(1, 3, 0x00);
+  lc.setRow(1, 4, 0x00);
+
+  const uint8_t N = sizeof(WRAP_BURNOUT_R0_FRAMES) / sizeof(WRAP_BURNOUT_R0_FRAMES[0]);
+  uint8_t r0[6];
+  for (uint8_t i = 0; i < N; i++) {
+    memcpy_P(r0, WRAP_BURNOUT_R0_FRAMES[i], 6);
+    for (uint8_t r = 0; r < 6; r++) lc.setRow(0, r, r0[r]);
+    delay(50);
+  }
 }
 
 // arg 1 : couleur, arg 2 : Vitesse, arg 3 : une seule led allumée, arg 4 : direction (true pour normal, false pour inverse)
@@ -1010,14 +590,14 @@ void doubleclick2() {
   BP_POWER_STATUS = true;
 }
 
-const uint64_t IMAGES_POST_FIN[] = {
+const uint64_t IMAGES_POST_FIN[] PROGMEM = {
   0x0000000000000000, 0x0000000102000000, 0x0000008106000000, 0x000000c10e000000,
   0x000000e11e000000, 0x000000f13e000000, 0x000000f97e000000, 0x000000fdfe000000,
   0x000000ffff000000, 0x000000fdfe000000, 0x000000f97e000000, 0x000000f13e000000,
   0x000000e11e000000, 0x000000c10e000000, 0x0000008106000000, 0x0000000102000000
 };
 
-const uint64_t IMAGES_NORMAL[] = {
+const uint64_t IMAGES_NORMAL[] PROGMEM = {
   0x0000000000000000, 0x0000000201000000, 0x0000000681000000, 0x0000000ec1000000,
   0x0000001ee1000000, 0x0000003ef1000000, 0x0000001ee1000000, 0x0000000ec1000000,
   0x0000001ee1000000, 0x0000003ef1000000, 0x0000007ef9000000, 0x000000fefd000000,
@@ -1026,7 +606,7 @@ const uint64_t IMAGES_NORMAL[] = {
   0x0000001ee1000000, 0x0000000ec1000000, 0x0000000681000000, 0x0000000201000000
 };
 
-const uint64_t IMAGES_FIN[] = {
+const uint64_t IMAGES_FIN[] PROGMEM = {
   0x0000000000000000, 0x0000000101000000, 0x0000008181000000, 0x0000008383000000,
   0x000000c3c3000000, 0x000000c7c7000000, 0x000000e7e7000000, 0x000000f7f7000000,
   0x000000ffff000000, 0x000000f7f7000000, 0x000000e7e7000000, 0x000000c7c7000000,
@@ -1049,7 +629,7 @@ const uint64_t IMAGES_FIN[] = {
   0x0000003ffc000000, 0x0000009ff9000000, 0x000000cff3000000, 0x000000e7e7000000
 };
 
-const uint64_t IMAGES_OFF[] = {
+const uint64_t IMAGES_OFF[] PROGMEM = {
   0x0000000000000000
 };
 
@@ -1068,7 +648,9 @@ void displayImage(const uint64_t image) {
 }
 
 void animateBargraphe(Bargraphe &bargraphe) {
-  displayImage(bargraphe.images[bargraphe.index]);
+  uint64_t img;
+  memcpy_P(&img, &bargraphe.images[bargraphe.index], sizeof(uint64_t));
+  displayImage(img);
   if (++bargraphe.index >= bargraphe.length) {
     bargraphe.index = 0;
   }
@@ -1168,6 +750,190 @@ void buttonStart() {
   running = !running;
 }
 
+// Effet "scramble" rapide sur les 2 digits secondes (matrix 0, rows 4-5)
+// pour donner un tick visuel a chaque incrementation/decrementation.
+// ~45ms total, non bloquant pour le timing 1Hz du countdown.
+void animateSecondTick() {
+  for (uint8_t i = 0; i < 3; i++) {
+    lc.setDigit(0, 4, random(10), false);
+    lc.setDigit(0, 5, random(10), false);
+    delay(15);
+  }
+}
+
+// Animation idle: pulse lent des NeoPixels (effet "respiration") quand le
+// timer est allume mais ni en running ni en menu. Ne touche pas la couleur
+// des pixels (adafruit gere ca via le potentiometre), juste la brightness.
+void idleAnimation() {
+  const uint16_t period = 3000;  // 3 sec / pulsation
+  uint16_t phase = millis() % period;
+  uint16_t halfPeriod = period / 2;
+  uint8_t brightness;
+  if (phase < halfPeriod) {
+    brightness = 3 + (uint8_t)((12UL * phase) / halfPeriod);   // 3 -> 15
+  } else {
+    brightness = 15 - (uint8_t)((12UL * (phase - halfPeriod)) / halfPeriod);  // 15 -> 3
+  }
+  strip.setBrightness(brightness);
+  strip.show();
+}
+
+// Pulse la brightness des NeoPixels en fonction du temps restant.
+// Plus le temps restant est court, plus la pulsation est rapide.
+// Force aussi la couleur des pixels (rouge selon prevVal) car adafruit() ne
+// refresh que si le potentiometre a change.
+void pulseNeoPixel(unsigned long reste) {
+  uint16_t period;
+  if (reste <= 5)        period = 200;   // 5 Hz - stress final
+  else if (reste <= 10)  period = 350;   // ~3 Hz - panique
+  else if (reste <= 20)  period = 600;   // ~1.6 Hz - urgence
+  else if (reste <= 30)  period = 900;   // ~1 Hz - warning
+  else                   period = 1800;  // 0.55 Hz - calme
+
+  unsigned long t = millis() % period;
+  uint8_t brightness;
+  uint16_t halfPeriod = period / 2;
+  if (t < halfPeriod) {
+    brightness = 5 + (uint8_t)((45UL * t) / halfPeriod);   // 5 -> 50
+  } else {
+    brightness = 50 - (uint8_t)((45UL * (t - halfPeriod)) / halfPeriod);  // 50 -> 5
+  }
+  // Reapplique les couleurs (au cas ou un autre code les a effacees)
+  for (uint8_t p = 0; p < 7; p++) {
+    strip.setPixelColor(p, p < (uint8_t)prevVal ? Red : Off);
+  }
+  strip.setBrightness(brightness);
+  strip.show();
+}
+
+// Animation "wormhole opening" - utilisee a la fin du burnout (totalsectime=0).
+// Convergence visuelle puis flash intense puis fade-out.
+void wormholeOpening() {
+  // Phase 1: build-up des segments (top -> tout)
+  static const uint8_t BUILD_UP[] PROGMEM = {0x40, 0x60, 0x70, 0x71, 0x77, 0x7F};
+  for (uint8_t step = 0; step < 6; step++) {
+    uint8_t pattern = pgm_read_byte(&BUILD_UP[step]);
+    for (uint8_t r = 0; r < 6; r++) lc.setRow(0, r, pattern);
+    for (uint8_t r = 0; r < 5; r++) lc.setRow(1, r, pattern);
+
+    strip.setBrightness(20 + step * 10);
+    for (uint8_t p = 0; p < 7; p++) strip.setPixelColor(p, Red);
+    strip.show();
+    delay(200);
+  }
+
+  // Phase 2: flash intense alterne
+  for (uint8_t i = 0; i < 4; i++) {
+    for (uint8_t r = 0; r < 6; r++) lc.setRow(0, r, 0xFF);
+    for (uint8_t r = 0; r < 5; r++) lc.setRow(1, r, 0xFF);
+    strip.setBrightness(100);
+    strip.show();
+    delay(80);
+    for (uint8_t r = 0; r < 6; r++) lc.setRow(0, r, 0x00);
+    for (uint8_t r = 0; r < 5; r++) lc.setRow(1, r, 0x00);
+    strip.setBrightness(0);
+    strip.show();
+    delay(80);
+  }
+
+  // Phase 3: fade-out NeoPixel
+  for (int b = 100; b >= 0; b -= 10) {
+    strip.setBrightness(b);
+    for (uint8_t p = 0; p < 7; p++) strip.setPixelColor(p, Red);
+    strip.show();
+    delay(50);
+  }
+  for (uint8_t p = 0; p < 7; p++) strip.setPixelColor(p, Off);
+  strip.show();
+}
+
+// Animation "alarme" - utilisee a la fin du countdown normal.
+// Flashes ON/OFF rapides avec bip + NeoPixel rouge.
+void countdownEnd() {
+  for (uint8_t i = 0; i < 8; i++) {
+    // ON
+    for (uint8_t r = 0; r < 6; r++) lc.setRow(0, r, 0x7F);
+    for (uint8_t r = 0; r < 5; r++) lc.setRow(1, r, 0xFF);
+    strip.setBrightness(80);
+    for (uint8_t p = 0; p < 7; p++) strip.setPixelColor(p, Red);
+    strip.show();
+    customTone(2500, 100);
+    delay(150);
+    // OFF
+    lc.clearDisplay(0);
+    lc.clearDisplay(1);
+    strip.setBrightness(0);
+    strip.show();
+    noTone(speaker);
+    delay(150);
+  }
+  for (uint8_t p = 0; p < 7; p++) strip.setPixelColor(p, Off);
+  strip.show();
+  noTone(speaker);
+}
+
+// Animation epique de ~8 secondes pour accompagner le mp3 vortex (0001.mp3).
+// Phase 1 (0-6s): rotation des segments qui s'accelere + bargraphe qui se
+// remplit + NeoPixels rouges progressifs.
+// Phase 2 (6-8s): climax avec flash intense + tous les segments allumes.
+void vortexAnimation() {
+  static const uint8_t SEG_ROT[] PROGMEM = {0x40, 0x20, 0x10, 0x08, 0x04, 0x02};  // a, b, c, d, e, f
+
+  unsigned long start = millis();
+  uint16_t step = 0;
+
+  while (millis() - start < VORTEX_MP3_DURATION_MS) {
+    unsigned long elapsed = millis() - start;
+
+    if (elapsed < 6000) {
+      // Phase rotation acceleree
+      uint8_t seg = pgm_read_byte(&SEG_ROT[step % 6]);
+      for (uint8_t r = 0; r < 6; r++) lc.setRow(0, r, seg);
+      for (uint8_t r = 0; r < 3; r++) lc.setRow(1, r, seg);
+
+      // Bargraphe progressif (matrix 1 rows 3-4)
+      uint8_t fillLevel = elapsed / 750;
+      if (fillLevel > 8) fillLevel = 8;
+      uint8_t bar = (fillLevel >= 8) ? 0xFF : ((uint8_t)((1 << fillLevel) - 1));
+      lc.setRow(1, 3, bar);
+      lc.setRow(1, 4, bar);
+
+      // NeoPixels rouges progressifs
+      uint8_t pixCount = (uint8_t)((elapsed / 800) + 1);
+      if (pixCount > 7) pixCount = 7;
+      for (uint8_t p = 0; p < 7; p++) {
+        strip.setPixelColor(p, p < pixCount ? Red : Off);
+      }
+      uint8_t bright = 20 + (uint8_t)(elapsed / 200);
+      if (bright > 60) bright = 60;
+      strip.setBrightness(bright);
+      strip.show();
+
+      // Vitesse: 100ms -> 25ms (acceleration)
+      int spd = 100 - (int)(elapsed / 80);
+      if (spd < 25) spd = 25;
+      delay(spd);
+      step++;
+    } else {
+      // Phase climax: flash intense
+      bool on = ((elapsed / 80) & 1) != 0;
+      for (uint8_t r = 0; r < 6; r++) lc.setRow(0, r, on ? 0x7F : 0x00);
+      for (uint8_t r = 0; r < 5; r++) lc.setRow(1, r, on ? 0xFF : 0x00);
+
+      strip.setBrightness(80);
+      for (uint8_t p = 0; p < 7; p++) strip.setPixelColor(p, on ? Red : Off);
+      strip.show();
+      delay(60);
+    }
+  }
+
+  // Cleanup
+  lc.clearDisplay(0);
+  lc.clearDisplay(1);
+  for (uint8_t p = 0; p < 7; p++) strip.setPixelColor(p, Off);
+  strip.show();
+}
+
 void normal() {
   // mode 0=normal 1=burnout 2=foutu
   byte vortex = 0;
@@ -1177,6 +943,7 @@ void normal() {
     if (firstStartup) {
       strip.show();
       BP_VORTEX_STATUS = false;
+      scrollVersion();  // Defilement "sliders timer replica by kenny v1.2"
       startMusique();
       genserSequence();
       displayWrap();
@@ -1201,14 +968,10 @@ void normal() {
       lc.setLed(1, 7, 3, false);
 
       mp3_play_physical(1);  // 0001.mp3 = son de vortex
-      // Pendant la lecture du mp3 (~8s), on joue displayWrap en boucle.
-      // Buzzer mute pour ne pas chevaucher le mp3 (displayWrap fait des bips).
+      // Animation custom epique synchro avec le mp3 (~8s)
       int prevBuzzerState = buzzerState;
       buzzerState = 0;
-      unsigned long mp3Start = millis();
-      while (millis() - mp3Start < VORTEX_MP3_DURATION_MS) {
-        displayWrap();
-      }
+      vortexAnimation();
       buzzerState = prevBuzzerState;
 
       while ((vortex == 0) && (BP_START_STATUS == true) && (totalsectime_slide != 0)) {
@@ -1227,26 +990,22 @@ void normal() {
         if (time_now - last_time >= 1000) {
           totalsectime++;
           last_time = time_now;
+          animateSecondTick();
           showTime();
         }
 
-        // End normal mode
+        // End normal mode: animation alarme + cleanup
         if (totalsectime_reste == 0) {
           mp3_play_physical(1);  // 0001.mp3 = son de vortex
           totalsectime = 0;
           totalsectime_slide = 0;
           totalsectime_reste = 0;
-          colorWipeUnified(Red, 100, false, true);
-          colorWipeUnified(Off, 100, false, false);
-          displayFade();
-          displayWrap();
-          animateBargraphe(bargrapheOff);
+          countdownEnd();  // animation alarme
           lc.setLed(1, 5, 5, false);
           lc.setLed(1, 5, 3, false);
           lc.setLed(1, 5, 4, false);
           lc.setLed(1, 7, 2, false);
           lc.setLed(1, 7, 3, false);
-          delay(200);
           showTime();
           running = false;
           BP_START_STATUS = false;
@@ -1273,7 +1032,7 @@ void normal() {
           displayFade();
           genserSequence();
           displayWrap();
-          reveille();
+          reveille(false);
         }
 
         // Time remain
@@ -1335,6 +1094,7 @@ void normal() {
         if (time_now1 - last_time1 >= 1000) {
           totalsectime--;
           last_time1 = time_now1;
+          animateSecondTick();
           showTime();
         }
 
@@ -1353,14 +1113,13 @@ void normal() {
           genserSequence();
           displayWrap();
           totalsectime = random(16756131);  // random
-          reveille();
+          reveille(false);
         }
 
         if (totalsectime == 0) {
           showTime();
           vortex = 2;
-          colorWipeUnified(Off, 100, false, false);
-          displayFade();
+          wormholeOpening();  // animation epique de fin burnout
           totalsectime = 0;
           startMusique();
         }
@@ -1395,6 +1154,9 @@ void normal() {
 
     else {
       adafruit();
+      if (menu == 0) {
+        idleAnimation();
+      }
       lc.setRow(1, 6, B01111000);
 
       while (!running && menu == 1) {
@@ -1454,6 +1216,7 @@ void normal() {
 void animation_burnout() {
   lc.setRow(1, 6, B01111000);
   adafruit();
+  pulseNeoPixel(totalsectime);
 
   if (totalsectime <= 30) {
     animateBargraphe(bargrapheFin);
@@ -1486,17 +1249,22 @@ void animation_burnout() {
   }
 
   if (totalsectime == 30) {
-    reveille();
+    reveille(false);
   }
 
-  if (totalsectime > 10 && totalsectime <= 20) {
-    updatespeaker_pattern(25, 5, 500);
-  } else if (totalsectime > 0 && totalsectime <= 10) {
-    updatespeaker_pattern(15, 10, 330);
+  // Mode burnout: totalsectime descend de N -> 0
+  if (totalsectime > 20 && totalsectime <= 30) {
+    updatespeaker_pattern(25, 5, 500);    // warning
+  } else if (totalsectime > 10 && totalsectime <= 20) {
+    updatespeaker_pattern(15, 10, 330);   // urgence
+  } else if (totalsectime > 5 && totalsectime <= 10) {
+    updatespeaker_pattern(10, 10, 200);   // panique
+  } else if (totalsectime > 0 && totalsectime <= 5) {
+    updatespeaker_pattern(5, 15, 100);    // stress final
   } else if (totalsectime == 0) {
     customTone(3000, 200);
   } else {
-    updatespeaker_pattern(500, 2, 0);
+    updatespeaker_pattern(500, 2, 0);     // calme (>30)
   }
 
   if ((totalsectime <= 5)) {
@@ -1519,20 +1287,26 @@ void animation_normal() {
   blinkLEDUnified(redLED);
   blinkLEDUnified(colonLED);
   adafruit();
+  pulseNeoPixel(totalsectime_reste);
   lc.setRow(1, 6, B01111000);
 
   if (totalsectime == 30) {
-    reveille();
+    reveille(false);
   }
 
-  if ((totalsectime_reste >= 10) && (totalsectime_reste <= 20)) {
-    updatespeaker_pattern(25, 5, 500);
-  } else if ((totalsectime_reste >= 1) && (totalsectime_reste < 10)) {
-    updatespeaker_pattern(15, 10, 330);
+  // Mode normal: totalsectime_reste = temps restant avant fin du countdown
+  if ((totalsectime_reste > 20) && (totalsectime_reste <= 30)) {
+    updatespeaker_pattern(25, 5, 500);    // warning
+  } else if ((totalsectime_reste > 10) && (totalsectime_reste <= 20)) {
+    updatespeaker_pattern(15, 10, 330);   // urgence
+  } else if ((totalsectime_reste > 5) && (totalsectime_reste <= 10)) {
+    updatespeaker_pattern(10, 10, 200);   // panique
+  } else if ((totalsectime_reste > 1) && (totalsectime_reste <= 5)) {
+    updatespeaker_pattern(5, 15, 100);    // stress final
   } else if (totalsectime_reste <= 1) {
     customTone(3000, 1500);
   } else {
-    updatespeaker_pattern(500, 2, 0);
+    updatespeaker_pattern(500, 2, 0);     // calme (>30)
   }
 
   if (totalsectime_reste == 6) {
@@ -1628,9 +1402,26 @@ void veille() {
   buzzerState = 0;
 }
 
-void reveille() {
+void reveille(bool fadeIn = true) {
+  // Fade-in: on rallume avec intensite 0 puis on monte progressivement.
+  // Avec fadeIn=false: rallumage instantane (utilise dans les boucles countdown
+  // ou un delay de 640ms casserait le timing 1Hz du compteur).
+  if (fadeIn) {
+    lc.setIntensity(0, 0);
+    lc.setIntensity(1, 0);
+  }
   lc.shutdown(1, LOW);
   lc.shutdown(0, LOW);
+  if (fadeIn) {
+    for (uint8_t level = 0; level <= 15; level++) {
+      lc.setIntensity(0, level);
+      lc.setIntensity(1, level);
+      delay(40);
+    }
+  } else {
+    lc.setIntensity(0, 15);
+    lc.setIntensity(1, 15);
+  }
   onadafruit();
   buzzerState = 1;
 }
